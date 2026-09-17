@@ -9,7 +9,9 @@
 
 一个前后端一体的智能记账应用，使用自然语言即可完成记账。
 
-[特性](#特性) • [快速开始](#快速开始) • [部署](#部署) • [文档](#文档) • [贡献](#贡献)
+[特性](#特性) • [界面预览](#界面预览) • [快速开始](#快速开始) • [部署](#部署) • [文档](#文档) • [贡献](#贡献)
+
+<img src="docs/images/dashboard.png" alt="智能记账首页" width="900">
 
 </div>
 
@@ -32,6 +34,26 @@
 **安全可靠** - 密码加密存储、Session + Remember-me 双重登录态、CSRF 防护
 
 **SQLite 数据库** - 零配置，备份就是复制一个文件
+
+## 界面预览
+
+### 桌面端
+
+| 登录 | 智能记账 |
+|:---:|:---:|
+| <img src="docs/images/login.png" alt="登录页"> | <img src="docs/images/dashboard.png" alt="智能记账"> |
+| **账单明细** | **统计分析** |
+| <img src="docs/images/transactions.png" alt="账单明细"> | <img src="docs/images/statistics.png" alt="统计分析"> |
+| **账户管理** | **账本管理** |
+| <img src="docs/images/accounts.png" alt="账户管理"> | <img src="docs/images/ledgers.png" alt="账本管理"> |
+
+### 移动端
+
+| 智能记账 | 账单明细 | 统计分析 | 我的 |
+|:---:|:---:|:---:|:---:|
+| <img src="docs/images/mobile-dashboard.png" alt="移动端智能记账" width="240"> | <img src="docs/images/mobile-transactions.png" alt="移动端账单明细" width="240"> | <img src="docs/images/mobile-statistics.png" alt="移动端统计分析" width="240"> | <img src="docs/images/mobile-profile.png" alt="移动端我的" width="240"> |
+| **账户管理** | **账本管理** | **登录** | |
+| <img src="docs/images/mobile-accounts.png" alt="移动端账户管理" width="240"> | <img src="docs/images/mobile-ledgers.png" alt="移动端账本管理" width="240"> | <img src="docs/images/mobile-login.png" alt="移动端登录" width="240"> | |
 
 ## 技术栈
 
@@ -328,6 +350,7 @@ smart-accounting-assistant/
 │   ├── data.sql                   # 初始化数据
 │   └── logback-spring.xml         # 日志配置
 ├── docs/                          # 文档（API/部署/贡献/功能指南）
+│   └── images/                    # README 界面截图
 ├── .env.example                   # 环境变量示例
 ├── docker-compose.yml
 ├── Dockerfile
