@@ -2,10 +2,10 @@
 # Stage 1: 编译（需要 JDK + Maven + Node.js）
 FROM maven:3.9-eclipse-temurin-17 AS builder
 
-# 安装 Node.js 20（前端构建需要）
+# 安装 Node.js 22（前端构建需要）
 RUN apt-get update && \
     apt-get install -y curl gnupg && \
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y nodejs && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*

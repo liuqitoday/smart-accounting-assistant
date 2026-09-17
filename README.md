@@ -27,7 +27,7 @@
 
 **统计分析** - 收支汇总（含环比）、分类构成饼图、月度/每日趋势图、大额支出排行
 
-**CSV 导入导出** - 支持随手记等 App 数据导入，支持按条件筛选导出
+**CSV 导入导出** - 支持外部数据导入，支持按条件筛选导出
 
 **安全可靠** - 密码加密存储、Session + Remember-me 双重登录态、CSRF 防护
 
@@ -39,13 +39,13 @@
 
 **前端：** Vue 3 + TypeScript + Vite + Chart.js + Lucide Icons
 
-**AI：** 支持 OpenAI 及兼容服务（Deepseek、Azure OpenAI 等）
+**AI：** 支持 OpenAI 及兼容服务（如 Deepseek 等）
 
 ## 前置要求
 
 - **Java 17+** - [下载 OpenJDK](https://adoptium.net/)
 - **Maven 3.8+** - 或使用项目内的 `./mvnw`
-- **Node.js 20+ / npm** - 仅本地构建前端时需要
+- **Node.js 22+ / npm** - 仅本地构建前端时需要
 - **AI API Key** - OpenAI API Key 或兼容服务的 API Key
 
 ## 快速开始
@@ -68,15 +68,14 @@ spring:
       api-key: sk-your-api-key-here
       base-url: https://api.openai.com  # OpenAI 官方
       # base-url: https://api.deepseek.com  # Deepseek
-      # base-url: https://your-azure-endpoint.openai.azure.com  # Azure OpenAI
       chat:
         options:
           model: gpt-3.5-turbo  # 或 gpt-4, deepseek-chat 等
 ```
 
-> `.env` 文件**只被 `docker-compose` 读取**，本地 `java -jar` / `spring-boot:run` 不会加载它；本地运行请用上面的 `application-local.yml`。
+> `.env` 文件**只被 `docker compose` 读取**，本地 `java -jar` / `spring-boot:run` 不会加载它；本地运行请用上面的 `application-local.yml`。
 
-**Docker / docker-compose 部署**：复制 `.env.example` 为 `.env` 并填写配置：
+**Docker / Docker Compose 部署**：复制 `.env.example` 为 `.env` 并填写配置：
 
 ```bash
 cp .env.example .env
@@ -88,7 +87,6 @@ cp .env.example .env
 |------|----------|-----------|------|
 | OpenAI | `https://api.openai.com` | `gpt-3.5-turbo`, `gpt-4` | 官方服务 |
 | Deepseek | `https://api.deepseek.com` | `deepseek-chat` | 国内可用 |
-| Azure OpenAI | 你的 Azure 端点 | 你的部署名称 | 企业方案 |
 
 ### 3. 构建并运行
 
@@ -120,26 +118,49 @@ npm run dev
 
 ### Docker 部署（推荐）
 
-1. **使用 Docker Compose（最简单）**
+1. **使用预构建镜像（最省事）**
+
+打 `v*` tag 时 CI 会自动构建 `linux/amd64` + `linux/arm64` 多架构镜像并推送到两个 registry，直接拉取即可（无需本地构建）：
+
+```bash
+# GitHub Container Registry
+docker pull ghcr.io/liuqitoday/smart-accounting-assistant:latest
+
+# Docker Hub
+docker pull liuqitoday/smart-accounting-assistant:latest
+```
+
+运行（镜像地址换成上面任一）：
+
+```bash
+docker run -d --name accounting-assistant \
+  -p 8081:8081 \
+  -v $(pwd)/data:/app/data \
+  -e SPRING_AI_OPENAI_API_KEY=sk-your-key \
+  -e REMEMBER_ME_KEY=$(openssl rand -hex 32) \
+  ghcr.io/liuqitoday/smart-accounting-assistant:latest
+```
+
+2. **使用 Docker Compose**
 
 ```bash
 # 创建配置文件
 cp .env.example .env
 # 编辑 .env 填入你的 API Key
 
-# 启动服务
-docker-compose up -d
+# 启动服务（会基于本地源码构建镜像）
+docker compose up -d
 
 # 查看日志
-docker-compose logs -f
+docker compose logs -f
 
 # 停止服务
-docker-compose down
+docker compose down
 ```
 
 访问 `http://localhost:8081`
 
-2. **手动 Docker 构建**
+3. **手动构建镜像**
 
 ```bash
 # 构建镜像
@@ -153,29 +174,6 @@ docker run -d \
   -e SPRING_AI_OPENAI_API_KEY=sk-your-key \
   -e REMEMBER_ME_KEY=$(openssl rand -hex 32) \
   accounting-assistant
-```
-
-3. **使用预构建镜像（无需自己构建）**
-
-打 `v*` tag 时 CI 会自动构建 `linux/amd64` + `linux/arm64` 多架构镜像并推送到两个 registry，直接拉取即可：
-
-```bash
-# GitHub Container Registry
-docker pull ghcr.io/liuqitoday/smart-accounting-assistant:latest
-
-# Docker Hub
-docker pull liuqitoday/smart-accounting-assistant:latest
-```
-
-运行（把镜像地址换成上面任一）：
-
-```bash
-docker run -d --name accounting-assistant \
-  -p 8081:8081 \
-  -v $(pwd)/data:/app/data \
-  -e SPRING_AI_OPENAI_API_KEY=sk-your-key \
-  -e REMEMBER_ME_KEY=$(openssl rand -hex 32) \
-  ghcr.io/liuqitoday/smart-accounting-assistant:latest
 ```
 
 **内存调优（可选）：** 容器内直接通过 JVM 原生的 `JAVA_TOOL_OPTIONS` 传入参数，例如 `-e JAVA_TOOL_OPTIONS="-Xmx512m -Xms256m"`（`JAVA_OPTS` 仅 systemd 部署使用）。
@@ -260,61 +258,13 @@ export COOKIE_SECURE=true
 | `SERVER_PORT` | 服务端口 | `8081` | 否 |
 | `SPRING_DATASOURCE_URL` | 数据库路径 | `jdbc:sqlite:accounting-assistant.db?journal_mode=WAL&busy_timeout=5000&synchronous=NORMAL` | 否 |
 
-## API 文档
+## 文档
 
-### 认证
-
-```http
-POST /api/auth/register     # 注册
-POST /api/auth/login        # 登录
-GET  /api/auth/me          # 当前用户
-POST /api/auth/logout      # 登出
-PUT  /api/auth/password    # 修改密码
-```
-
-### 交易
-
-```http
-POST   /api/transactions/parse-only   # AI 解析（不保存）
-POST   /api/transactions/save         # 保存解析结果
-GET    /api/transactions              # 列表（分页、筛选）
-GET    /api/transactions/{id}
-PUT    /api/transactions/{id}
-DELETE /api/transactions/{id}
-POST   /api/transactions/{id}/tags    # 更新标签
-GET    /api/transactions/export       # CSV 导出
-POST   /api/transactions/import       # CSV 导入
-```
-
-### 分析
-
-```http
-POST   /api/analysis/chat             # AI 分析对话
-GET    /api/analysis/messages         # 聊天历史
-DELETE /api/analysis/messages         # 清空历史
-```
-
-### 统计
-
-```http
-GET /api/statistics/summary           # 汇总（含环比）
-GET /api/statistics/by-category       # 分类构成
-GET /api/statistics/trend             # 月度趋势
-GET /api/statistics/trend/daily       # 日趋势
-GET /api/statistics/top-expenses      # 大额支出排行
-GET /api/statistics/recent            # 最近交易
-```
-
-所有响应格式：
-
-```json
-{
-  "success": true,
-  "data": { ... },
-  "message": "成功",
-  "errorCode": null
-}
-```
+- [API 文档](docs/API.md) - 常用接口与统一响应格式
+- [部署指南](docs/DEPLOYMENT.md) - Docker / systemd / 反向代理 / 备份
+- [贡献指南](docs/CONTRIBUTING.md) - 开发环境、代码规范、PR 流程
+- [交易筛选、导出与导入指南](docs/FILTER_AND_EXPORT_GUIDE.md)
+- [标签与 CSV 导入指南](docs/TAG_AND_IMPORT_GUIDE.md)
 
 ## 数据库
 
@@ -377,7 +327,7 @@ smart-accounting-assistant/
 │   ├── application.yml            # 主配置
 │   ├── data.sql                   # 初始化数据
 │   └── logback-spring.xml         # 日志配置
-├── docs/                          # 文档（贡献/部署/功能指南）
+├── docs/                          # 文档（API/部署/贡献/功能指南）
 ├── .env.example                   # 环境变量示例
 ├── docker-compose.yml
 ├── Dockerfile

@@ -79,26 +79,26 @@ COOKIE_SECURE=false
 ### 2. 启动服务
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
 
 ### 3. 查看状态
 
 ```bash
 # 查看运行状态
-docker-compose ps
+docker compose ps
 
 # 查看日志
-docker-compose logs -f
+docker compose logs -f
 
 # 查看实时日志（特定服务）
-docker-compose logs -f app
+docker compose logs -f app
 ```
 
 ### 4. 停止服务
 
 ```bash
-docker-compose down
+docker compose down
 ```
 
 ### 5. 更新服务
@@ -108,7 +108,7 @@ docker-compose down
 git pull
 
 # 重新构建并启动
-docker-compose up -d --build
+docker compose up -d --build
 ```
 
 ## 传统部署
