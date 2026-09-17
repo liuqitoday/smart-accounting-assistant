@@ -1,0 +1,101 @@
+spring:
+  # 本地开发覆盖（AI key、springdoc 开关、日志级别等敏感/环境项），文件不进 git
+  config:
+    import: optional:file:./application-local.yml
+
+  application:
+    name: accounting-assistant
+
+  # SQLite数据库配置
+  # URL 查询参数由 xerial 驱动解析为 PRAGMA：WAL 提升读写并发，busy_timeout 抗写锁竞争，
+  # synchronous=NORMAL 在 WAL 下安全且减少 fsync
+  datasource:
+    url: jdbc:sqlite:accounting-assistant.db?journal_mode=WAL&busy_timeout=5000&synchronous=NORMAL
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 4  # SQLite 单写者模型，池再大也排队，小池减少锁竞争
+
+  jpa:
+    hibernate:
+      ddl-auto: update  # SQLite使用update模式自动创建表
+    show-sql: ${SHOW_SQL:false}
+    defer-datasource-initialization: true  # 确保JPA先创建表，再执行data.sql
+    properties:
+      hibernate:
+        dialect: org.hibernate.community.dialect.SQLiteDialect
+        format_sql: true
+        # 批量加载懒加载集合（如 Transaction.tags），把列表/搜索/导出的 N+1 降为少量 IN(...) 查询
+        default_batch_fetch_size: 50
+
+  sql:
+    init:
+      mode: always  # 每次启动都执行data.sql
+
+  flyway:
+    enabled: false  # SQLite不需要Flyway，使用Hibernate自动创建表
+    
+  ai:
+    # 收紧重试：框架默认 max-attempts=10、退避最长 3min，对第三方代理过于激进
+    retry:
+      max-attempts: 2
+      backoff:
+        initial-interval: 800ms
+        multiplier: 2
+        max-interval: 5s
+    openai:
+      # 密钥不入库：生产用环境变量注入，本地开发写在 application-local.yml
+      # 支持 OpenAI 及兼容服务（Deepseek、Azure OpenAI 等）
+      api-key: ${SPRING_AI_OPENAI_API_KEY:}
+      base-url: ${SPRING_AI_OPENAI_BASE_URL:https://api.openai.com}
+      chat:
+        options:
+          model: ${SPRING_AI_OPENAI_MODEL:gpt-3.5-turbo}
+          temperature: 0.0   # 抽取/分类为确定性任务，降低随机性以稳定输出
+          top-p: 0.7
+
+  # 统一 HTTP 客户端超时，避免代理慢挂起拖住请求线程（Spring AI 的 RestClient 复用此配置）
+  http:
+    client:
+      connect-timeout: 5s
+      read-timeout: 60s
+
+server:
+  port: 8081
+  # 反代（nginx 等）转发时按 X-Forwarded-* 还原 scheme/host，request.isSecure() 才准确
+  forward-headers-strategy: framework
+  servlet:
+    session:
+      timeout: 7d          # 空闲滑动过期；令牌兜底重启/换端场景
+      cookie:
+        http-only: true
+        same-site: lax
+        secure: ${COOKIE_SECURE:false}  # 生产 HTTPS 置 true，本地 http 保持 false
+        max-age: 7d        # JSESSIONID 持久化，减少自动续登频次
+
+# 生产默认关闭 API 文档暴露面；本地开发在 application-local.yml 覆盖两项为 true 即可临时开启
+springdoc:
+  api-docs:
+    enabled: false
+  swagger-ui:
+    enabled: false
+
+app:
+  security:
+    remember-me:
+      key: ${REMEMBER_ME_KEY:accounting-assistant-remember-me}  # 持久令牌方案下仅用于 JVM 内签名，非敏感
+      validity: 7d
+  analysis:
+    daily-limit: 30  # 每用户每天最多提问次数（V1 ChatService，Task 8 切换后可移除）
+  ai:
+    daily-limit: 200  # 每用户每天 AI 记账解析（/parse、/parse-only）上限
+
+analysis:
+  usage:
+    formal-per-day: 30
+    clarification-per-day: 60
+    request-window-count: 5
+    request-window-minutes: 10
+    failure-window-count: 3
+    failure-window-minutes: 10
+  payload:
+    max-bytes: 262144

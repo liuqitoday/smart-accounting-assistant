@@ -1,0 +1,43 @@
+# Maven
+target/
+!.mvn/wrapper/maven-wrapper.jar
+*.jar
+*.war
+*.ear
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+# 数据库文件（启动时自动生成）；WAL 模式伴生文件一并忽略
+*.db
+*.db-wal
+*.db-shm
+data/
+
+# 本地/部署敏感配置（含密钥，勿提交）
+application-local.yml
+.env
+
+# Logs
+account-assistant-logs/
+
+# Temporary files
+*.tmp
+*.temp
+
+.claude
+.agents
+skills-lock.json
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
