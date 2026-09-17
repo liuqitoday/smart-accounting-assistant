@@ -1,0 +1,84 @@
+name: Publish Docker image
+
+# 打 v* tag 时构建多架构镜像并推送；也可在 Actions 页面手动触发（此时只更新 latest）
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  IMAGE_NAME: smart-accounting-assistant
+
+jobs:
+  ghcr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      # 仅当配置了 Docker Hub 凭据时才执行镜像同步，未配置也不影响 GHCR 推送
+      dockerhub_configured: ${{ steps.gate.outputs.ok }}
+    steps:
+      - id: gate
+        env:
+          HAS_DOCKERHUB: ${{ secrets.DOCKERHUB_USERNAME != '' && secrets.DOCKERHUB_TOKEN != '' }}
+        run: echo "ok=$HAS_DOCKERHUB" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU (arm64 模拟)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest
+
+      - name: Build and push (linux/amd64, linux/arm64)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  dockerhub:
+    needs: ghcr
+    if: needs.ghcr.outputs.dockerhub_configured == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 直接把 GHCR 的多架构 manifest 复制到 Docker Hub，不重新构建
+      - name: Mirror image to Docker Hub
+        run: |
+          SRC="ghcr.io/${{ github.repository }}"
+          DST="docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}"
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            docker buildx imagetools create --tag "$DST:${GITHUB_REF_NAME}" "$SRC:${GITHUB_REF_NAME}"
+          fi
+          docker buildx imagetools create --tag "$DST:latest" "$SRC:latest"

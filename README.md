@@ -155,6 +155,29 @@ docker run -d \
   accounting-assistant
 ```
 
+3. **使用预构建镜像（无需自己构建）**
+
+打 `v*` tag 时 CI 会自动构建 `linux/amd64` + `linux/arm64` 多架构镜像并推送到两个 registry，直接拉取即可：
+
+```bash
+# GitHub Container Registry
+docker pull ghcr.io/liuqitoday/smart-accounting-assistant:latest
+
+# Docker Hub
+docker pull liuqitoday/smart-accounting-assistant:latest
+```
+
+运行（把镜像地址换成上面任一）：
+
+```bash
+docker run -d --name accounting-assistant \
+  -p 8081:8081 \
+  -v $(pwd)/data:/app/data \
+  -e SPRING_AI_OPENAI_API_KEY=sk-your-key \
+  -e REMEMBER_ME_KEY=$(openssl rand -hex 32) \
+  ghcr.io/liuqitoday/smart-accounting-assistant:latest
+```
+
 **内存调优（可选）：** 容器内直接通过 JVM 原生的 `JAVA_TOOL_OPTIONS` 传入参数，例如 `-e JAVA_TOOL_OPTIONS="-Xmx512m -Xms256m"`（`JAVA_OPTS` 仅 systemd 部署使用）。
 
 ### 传统部署
