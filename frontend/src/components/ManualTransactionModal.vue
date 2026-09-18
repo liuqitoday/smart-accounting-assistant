@@ -125,6 +125,7 @@ import CategorySelector from '@/components/CategorySelector.vue'
 import TagSelector from '@/components/TagSelector.vue'
 import UiModal from '@/components/UiModal.vue'
 import type { Account, Category, SaveTransactionRequest, Tag, TransactionType } from '@/types'
+import { resolveDefaultAccountId } from '@/utils/account'
 import { flattenCategories } from '@/utils/category'
 import { cssMs } from '@/utils/css'
 import { defaultAccountIcon, today, toNumber } from '@/utils/format'
@@ -187,7 +188,7 @@ function resetForm(): void {
     type: 'EXPENSE' as TransactionType,
     transactionDate: today(),
     categoryId: '',
-    accountId: '',
+    accountId: resolveDefaultAccountId(props.accounts) ?? '',
     fromAccountId: '',
     toAccountId: '',
     parsedMerchant: '',

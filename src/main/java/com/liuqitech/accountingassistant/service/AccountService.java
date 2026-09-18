@@ -4,11 +4,13 @@ import com.liuqitech.accountingassistant.dto.AccountDto;
 import com.liuqitech.accountingassistant.dto.CreateAccountRequest;
 import com.liuqitech.accountingassistant.dto.UpdateAccountRequest;
 import com.liuqitech.accountingassistant.entity.Account;
+import com.liuqitech.accountingassistant.entity.LedgerMember;
 import com.liuqitech.accountingassistant.enums.AccountType;
 import com.liuqitech.accountingassistant.enums.TransactionType;
 import com.liuqitech.accountingassistant.exception.BusinessException;
 import com.liuqitech.accountingassistant.exception.ResourceNotFoundException;
 import com.liuqitech.accountingassistant.repository.AccountRepository;
+import com.liuqitech.accountingassistant.repository.LedgerMemberRepository;
 import com.liuqitech.accountingassistant.repository.TransactionRepository;
 import com.liuqitech.accountingassistant.repository.projection.AnalysisNamedOption;
 import org.slf4j.Logger;
@@ -30,6 +32,9 @@ import com.liuqitech.accountingassistant.util.NumberUtils;
  * <p>账户只持久化期初余额，当前余额按「期初 + 关联交易收支净额」实时计算，
  * 不存储可变余额。本服务不依赖 {@code TransactionService}，仅通过
  * {@link TransactionRepository} 做聚合，避免循环依赖。</p>
+ *
+ * <p>「默认账户」是每个成员在每个账本各自一份的个人偏好（存于 {@code ledger_members.default_account_id}），
+ * 只影响新建交易时前端的自动选中，不参与余额计算。</p>
  */
 @Service
 public class AccountService {
@@ -38,18 +43,23 @@ public class AccountService {
 
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
+    private final LedgerMemberRepository ledgerMemberRepository;
 
     public AccountService(AccountRepository accountRepository,
-                          TransactionRepository transactionRepository) {
+                          TransactionRepository transactionRepository,
+                          LedgerMemberRepository ledgerMemberRepository) {
         this.accountRepository = accountRepository;
         this.transactionRepository = transactionRepository;
+        this.ledgerMemberRepository = ledgerMemberRepository;
     }
 
     /**
      * 获取账本所有账户（含实时计算的当前余额与交易笔数），在用账户优先。
+     *
+     * @param username 当前登录用户——「默认账户」是个人偏好，同一账本对不同用户结果可能不同
      */
     @Transactional(readOnly = true)
-    public List<AccountDto> getLedgerAccounts(Long ledgerId) {
+    public List<AccountDto> getLedgerAccounts(Long ledgerId, String username) {
         logger.debug("获取账本 {} 的账户列表", ledgerId);
 
         List<Account> accounts = accountRepository.findByLedgerIdOrderByActiveDescIdAsc(ledgerId);
@@ -79,11 +89,16 @@ public class AccountService {
             countByAccount.merge(accountId, count, Long::sum);
         }
 
+        Long defaultAccountId = ledgerMemberRepository.findByLedgerIdAndUsername(ledgerId, username)
+                .map(LedgerMember::getDefaultAccountId)
+                .orElse(null);
+
         List<AccountDto> result = new ArrayList<>();
         for (Account account : accounts) {
             BigDecimal net = netByAccount.getOrDefault(account.getId(), BigDecimal.ZERO);
             long count = countByAccount.getOrDefault(account.getId(), 0L);
-            result.add(convertToDto(account, account.getInitialBalance().add(net), count));
+            result.add(convertToDto(account, account.getInitialBalance().add(net), count,
+                    account.getId().equals(defaultAccountId)));
         }
         return result;
     }
@@ -124,15 +139,15 @@ public class AccountService {
 
         Account saved = accountRepository.save(account);
         logger.info("账本 {} 创建账户成功: {}", ledgerId, saved.getName());
-        // 新账户暂无交易，当前余额 = 期初余额
-        return convertToDto(saved, saved.getInitialBalance(), 0L);
+        // 新账户暂无交易，当前余额 = 期初余额；且不可能是任何人的默认账户
+        return convertToDto(saved, saved.getInitialBalance(), 0L, false);
     }
 
     /**
      * 更新账户（局部更新，仅改非 null 字段）
      */
     @Transactional
-    public AccountDto updateAccount(Long ledgerId, Long accountId, UpdateAccountRequest request) {
+    public AccountDto updateAccount(Long ledgerId, String username, Long accountId, UpdateAccountRequest request) {
         Account account = requireAccountInLedger(ledgerId, accountId);
 
         if (request.getName() != null) {
@@ -161,8 +176,12 @@ public class AccountService {
         }
 
         Account saved = accountRepository.save(account);
+        if (!saved.isActive()) {
+            // 停用的账户不会出现在任何选择器里，保留"默认账户"指向等于留了个不生效的设置
+            ledgerMemberRepository.clearDefaultAccount(ledgerId, accountId);
+        }
         logger.info("账本 {} 更新账户成功: {}", ledgerId, saved.getName());
-        return toDtoWithBalance(saved);
+        return toDtoWithBalance(saved, username);
     }
 
     /**
@@ -179,7 +198,33 @@ public class AccountService {
         }
 
         accountRepository.delete(account);
+        ledgerMemberRepository.clearDefaultAccount(ledgerId, accountId);
         logger.info("账本 {} 删除账户成功: {}", ledgerId, account.getName());
+    }
+
+    /**
+     * 设置当前用户在本账本的默认账户（新建交易时前端自动选中）。
+     *
+     * @param accountId 账户 id；传 {@code null} 表示清除该偏好
+     */
+    @Transactional
+    public void setDefaultAccount(Long ledgerId, String username, Long accountId) {
+        if (accountId != null) {
+            Account account = requireAccountInLedger(ledgerId, accountId);
+            if (!account.isActive()) {
+                throw new BusinessException("停用的账户不能设为默认账户");
+            }
+        }
+        LedgerMember member = requireMembership(ledgerId, username);
+        member.setDefaultAccountId(accountId);
+        ledgerMemberRepository.save(member);
+        logger.info("用户 {} 在账本 {} 设置默认账户为 {}", username, ledgerId, accountId);
+    }
+
+    /** 取当前用户在本账本的成员行；账本作用域接口由拦截器保证成员身份，缺失属异常状态。 */
+    private LedgerMember requireMembership(Long ledgerId, String username) {
+        return ledgerMemberRepository.findByLedgerIdAndUsername(ledgerId, username)
+                .orElseThrow(() -> new ResourceNotFoundException("当前用户不属于该账本"));
     }
 
     /**
@@ -235,7 +280,7 @@ public class AccountService {
     }
 
     /** 单账户重新计算当前余额与笔数后转 DTO */
-    private AccountDto toDtoWithBalance(Account account) {
+    private AccountDto toDtoWithBalance(Account account, String username) {
         BigDecimal net = BigDecimal.ZERO;
         long count = 0L;
         for (Object[] row : transactionRepository.sumAmountByAccountGroupByType(account.getId())) {
@@ -248,14 +293,22 @@ public class AccountService {
             net = net.add(NumberUtils.toBigDecimal(row[0]));
             count += ((Number) row[1]).longValue();
         }
-        return convertToDto(account, account.getInitialBalance().add(net), count);
+        return convertToDto(account, account.getInitialBalance().add(net), count, isDefaultAccount(account, username));
+    }
+
+    /** 该账户是否为指定用户在其所属账本的默认账户 */
+    private boolean isDefaultAccount(Account account, String username) {
+        return ledgerMemberRepository.findByLedgerIdAndUsername(account.getLedgerId(), username)
+                .map(member -> account.getId().equals(member.getDefaultAccountId()))
+                .orElse(false);
     }
 
     private BigDecimal signedAmount(TransactionType type, BigDecimal amount) {
         return type == TransactionType.INCOME ? amount : amount.negate();
     }
 
-    private AccountDto convertToDto(Account account, BigDecimal currentBalance, long transactionCount) {
+    private AccountDto convertToDto(Account account, BigDecimal currentBalance, long transactionCount,
+                                    boolean isDefault) {
         AccountDto dto = new AccountDto();
         dto.setId(account.getId());
         dto.setName(account.getName());
@@ -265,6 +318,7 @@ public class AccountService {
         dto.setIcon(account.getIcon());
         dto.setColor(account.getColor());
         dto.setActive(account.isActive());
+        dto.setDefault(isDefault);
         dto.setTransactionCount(transactionCount);
         dto.setCreatedAt(account.getCreatedAt());
         return dto;

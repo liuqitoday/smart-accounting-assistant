@@ -3,6 +3,7 @@ package com.liuqitech.accountingassistant.controller;
 import com.liuqitech.accountingassistant.dto.AccountDto;
 import com.liuqitech.accountingassistant.dto.ApiResponse;
 import com.liuqitech.accountingassistant.dto.CreateAccountRequest;
+import com.liuqitech.accountingassistant.dto.SetDefaultAccountRequest;
 import com.liuqitech.accountingassistant.dto.UpdateAccountRequest;
 import com.liuqitech.accountingassistant.interceptor.LedgerContext;
 import com.liuqitech.accountingassistant.service.AccountService;
@@ -30,13 +31,14 @@ public class AccountController {
     }
 
     /**
-     * 获取当前账本的所有账户（含当前余额）
+     * 获取当前账本的所有账户（含当前余额；默认账户对本用户标 default=true）
      */
     @GetMapping
     public ApiResponse<List<AccountDto>> getAccounts(HttpServletRequest request) {
         Long ledgerId = LedgerContext.ledgerId(request);
+        String username = LedgerContext.username(request);
         logger.debug("获取账本 {} 的账户列表", ledgerId);
-        return ApiResponse.success(accountService.getLedgerAccounts(ledgerId));
+        return ApiResponse.success(accountService.getLedgerAccounts(ledgerId, username));
     }
 
     /**
@@ -52,6 +54,20 @@ public class AccountController {
     }
 
     /**
+     * 设置当前用户在当前账本的默认账户（新建交易时前端自动选中账户）。
+     * body 传 {@code {"accountId": null}} 表示清除该偏好。
+     */
+    @PutMapping("/default")
+    public ApiResponse<Void> setDefaultAccount(@RequestBody SetDefaultAccountRequest req,
+                                               HttpServletRequest request) {
+        Long ledgerId = LedgerContext.ledgerId(request);
+        String username = LedgerContext.username(request);
+        logger.info("账本 {} 用户 {} 设置默认账户为 {}", ledgerId, username, req.getAccountId());
+        accountService.setDefaultAccount(ledgerId, username, req.getAccountId());
+        return ApiResponse.success(null);
+    }
+
+    /**
      * 更新账户
      */
     @PutMapping("/{id}")
@@ -59,8 +75,9 @@ public class AccountController {
                                                  @Valid @RequestBody UpdateAccountRequest req,
                                                  HttpServletRequest request) {
         Long ledgerId = LedgerContext.ledgerId(request);
+        String username = LedgerContext.username(request);
         logger.info("账本 {} 更新账户 {}", ledgerId, id);
-        return ApiResponse.success(accountService.updateAccount(ledgerId, id, req));
+        return ApiResponse.success(accountService.updateAccount(ledgerId, username, id, req));
     }
 
     /**

@@ -36,6 +36,13 @@ public class LedgerMember {
     @Column(nullable = false, length = 20)
     private LedgerRole role;
 
+    /**
+     * 该成员在本账本的默认账户（个人偏好，账本内各成员互不影响）；null 表示未设置。
+     * 新建交易时前端据此自动选中账户。
+     */
+    @Column(name = "default_account_id")
+    private Long defaultAccountId;
+
     /** 加入时间 */
     @CreationTimestamp
     @Column(name = "created_at")
@@ -79,6 +86,14 @@ public class LedgerMember {
 
     public void setRole(LedgerRole role) {
         this.role = role;
+    }
+
+    public Long getDefaultAccountId() {
+        return defaultAccountId;
+    }
+
+    public void setDefaultAccountId(Long defaultAccountId) {
+        this.defaultAccountId = defaultAccountId;
     }
 
     public LocalDateTime getCreatedAt() {

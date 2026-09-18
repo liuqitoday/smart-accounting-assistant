@@ -38,7 +38,10 @@
               {{ account.icon || defaultAccountIcon(account.type) }}
             </div>
             <div>
-              <h2>{{ account.name }}</h2>
+              <h2>
+                {{ account.name }}
+                <span v-if="account.default" class="badge neutral default-badge">默认</span>
+              </h2>
               <p>{{ accountTypeLabel(account.type) }}</p>
             </div>
           </div>
@@ -50,6 +53,20 @@
             <span>{{ account.transactionCount }} 笔交易</span>
           </div>
           <div class="row-actions">
+            <button
+              class="button secondary compact"
+              type="button"
+              :disabled="!ledger.canEdit.value || !account.active || settingDefaultId === account.id"
+              :title="account.active ? undefined : '停用的账户不能设为默认'"
+              @click="toggleDefault(account)"
+            >
+              <span
+                v-if="settingDefaultId === account.id"
+                class="t-shimmer button-shimmer"
+                data-text="设置中..."
+              >设置中...</span>
+              <template v-else>{{ account.default ? '取消默认' : '设为默认' }}</template>
+            </button>
             <button
               class="button secondary compact"
               type="button"
@@ -142,6 +159,7 @@ const saving = ref(false)
 const modalOpen = ref(false)
 const editingId = ref<number | null>(null)
 const togglingId = ref<number | null>(null)
+const settingDefaultId = ref<number | null>(null)
 const accounts = ref<Account[]>([])
 const form = reactive({
   name: '',
@@ -216,6 +234,20 @@ async function save(): Promise<void> {
   }
 }
 
+async function toggleDefault(account: Account): Promise<void> {
+  if (settingDefaultId.value !== null) return
+  settingDefaultId.value = account.id
+  try {
+    await accountsApi.setDefault(account.default ? null : account.id)
+    showSuccess(account.default ? `已取消「${account.name}」的默认设置。` : `已将「${account.name}」设为默认账户。`)
+    await loadAccounts()
+  } catch (error) {
+    showError(error)
+  } finally {
+    settingDefaultId.value = null
+  }
+}
+
 async function toggleActive(account: Account): Promise<void> {
   if (togglingId.value !== null) return
   togglingId.value = account.id
@@ -275,6 +307,10 @@ async function remove(account: Account): Promise<void> {
   border-radius: var(--radius-md);
   color: white;
   font-size: 22px;
+}
+
+.default-badge {
+  vertical-align: middle;
 }
 
 .account-balance {

@@ -183,6 +183,10 @@ export const accountsApi = {
   update(id: number, payload: Partial<Pick<Account, 'name' | 'type' | 'initialBalance' | 'icon' | 'color' | 'active'>>) {
     return put<Account>(`/api/accounts/${id}`, payload)
   },
+  /** 设置当前用户在本账本的默认账户；传 null 清除（默认账户是可选设置） */
+  setDefault(accountId: number | null) {
+    return put<void>('/api/accounts/default', { accountId })
+  },
   delete(id: number) {
     return del<void>(`/api/accounts/${id}`)
   }

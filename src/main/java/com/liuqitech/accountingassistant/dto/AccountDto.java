@@ -9,6 +9,10 @@ import java.time.LocalDateTime;
  * 账户 DTO。
  *
  * <p>{@link #currentBalance} 为「期初余额 + 关联交易收支净额」的实时计算值，不持久化。</p>
+ *
+ * <p>{@link #isDefault} 表示「当前登录用户在当前账本的默认账户」，是个人偏好而非账户固有属性，
+ * 因此同一账本对不同用户返回的该字段可能不同。getter 命名为 {@code isDefault()}，
+ * 序列化后 JSON 字段名为 {@code default}，与 {@code LedgerDto} 的既定约定一致。</p>
  */
 public class AccountDto {
 
@@ -21,6 +25,8 @@ public class AccountDto {
     private String icon;
     private String color;
     private boolean active;
+    /** 是否为当前用户在当前账本的默认账户 */
+    private boolean isDefault;
     /** 关联本账户的交易笔数 */
     private long transactionCount;
     private LocalDateTime createdAt;
@@ -89,6 +95,14 @@ public class AccountDto {
 
     public void setActive(boolean active) {
         this.active = active;
+    }
+
+    public boolean isDefault() {
+        return isDefault;
+    }
+
+    public void setDefault(boolean isDefault) {
+        this.isDefault = isDefault;
     }
 
     public long getTransactionCount() {

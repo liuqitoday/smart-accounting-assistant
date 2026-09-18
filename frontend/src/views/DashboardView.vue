@@ -172,6 +172,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { CalendarDays, CheckCircle2, ChevronDown, Plus, Sparkles, TriangleAlert } from 'lucide-vue-next'
 import { accountsApi, categoriesApi, statisticsApi, tagsApi, transactionsApi } from '@/api'
+import { resolveDefaultAccountId } from '@/utils/account'
 import { flattenCategories } from '@/utils/category'
 import AppShell from '@/components/AppShell.vue'
 import CategorySelector from '@/components/CategorySelector.vue'
@@ -247,6 +248,9 @@ async function parse(): Promise<void> {
   parsing.value = true
   try {
     const result = await transactionsApi.parseOnly(text.value)
+    if (result.accountId == null) {
+      result.accountId = resolveDefaultAccountId(accounts.value)
+    }
     parseResult.value = result
     selectedTagIds.value = result.tags?.map(tag => tag.id) || []
     moreOpen.value = false

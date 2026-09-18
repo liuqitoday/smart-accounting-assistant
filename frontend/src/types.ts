@@ -55,6 +55,8 @@ export interface Account {
   icon?: string | null
   color?: string | null
   active: boolean
+  /** 是否为当前用户在当前账本的默认账户（个人偏好，同一账本不同用户结果可能不同） */
+  default?: boolean
   transactionCount: number
   createdAt?: string
 }
