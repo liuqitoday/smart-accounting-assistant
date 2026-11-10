@@ -1,5 +1,5 @@
 <template>
-  <AppShell>
+  <div class="view-page">
     <PageHeader title="标签管理" subtitle="维护当前账本的交易标签，用于筛选、导入和统计。">
       <template #actions>
         <button class="button" type="button" :disabled="!ledger.canEdit.value" @click="openCreate">
@@ -51,19 +51,19 @@
         </div>
       </form>
     </UiModal>
-  </AppShell>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { reactive, ref } from 'vue'
 import { Plus } from 'lucide-vue-next'
 import { tagsApi } from '@/api'
-import AppShell from '@/components/AppShell.vue'
 import ColorSwatches from '@/components/ColorSwatches.vue'
 import MessageBanner from '@/components/MessageBanner.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import UiModal from '@/components/UiModal.vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { useDataRefresh } from '@/composables/useDataRefresh'
 import { useMessage } from '@/composables/useMessage'
 import { useLedgerStore } from '@/stores/ledger'
 import type { Tag } from '@/types'
@@ -82,7 +82,7 @@ const { message, showSuccess, showError, clear } = useMessage()
 const { message: modalMessage, showError: showModalError, clear: clearModalMessage } = useMessage()
 const { confirm } = useConfirm()
 
-onMounted(loadTags)
+useDataRefresh(loadTags)
 
 async function loadTags(): Promise<void> {
   loading.value = true

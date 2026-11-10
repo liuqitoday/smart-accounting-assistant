@@ -1,5 +1,5 @@
 <template>
-  <AppShell>
+  <div class="transactions-view">
     <PageHeader title="账单明细" subtitle="按日期、类型和标签筛选,支持编辑、导入与导出。">
       <template #actions>
         <button class="button secondary recurring-bills-btn" type="button" @click="recurringOpen = true">
@@ -174,12 +174,25 @@
         </button>
       </div>
 
-      <div v-if="loading" class="loading-state">
-        <span class="t-shimmer" data-text="正在翻账本...">正在翻账本...</span>
+      <div v-if="referenceError" class="refresh-notice error" role="alert">
+        <span>{{ referenceError }}</span>
+        <button class="button ghost compact" type="button" @click="loadFilterData">重试筛选数据</button>
       </div>
-      <div v-else-if="!page.content.length" class="empty-state coins">这段时间还没有账单,去记一笔吧</div>
+      <div v-if="listError" class="refresh-notice error" role="alert">
+        <span>{{ listError }}</span>
+        <button class="button ghost compact" type="button" @click="loadTransactions()">重新加载</button>
+      </div>
+      <p v-if="loading && hasLoaded" class="refresh-status" role="status">正在更新账单，已显示上次结果</p>
+      <div v-if="loading && !hasLoaded" class="transaction-skeleton" role="status" aria-label="正在加载账单">
+        <div v-for="row in 5" :key="row" class="transaction-skeleton-row">
+          <SkeletonBlock style="width: 40px; height: 40px; border-radius: 12px" />
+          <div><SkeletonBlock style="width: 65%; height: 18px" /><SkeletonBlock style="width: 40%; height: 12px; margin-top: 10px" /></div>
+          <SkeletonBlock style="width: 62px; height: 22px" />
+        </div>
+      </div>
+      <div v-else-if="hasLoaded && !page.content.length" class="empty-state coins">这段时间还没有账单,去记一笔吧</div>
       <TransactionFlow
-        v-else
+        v-else-if="page.content.length"
         :transactions="page.content"
         show-actions
         :can-edit="ledger.canEdit.value"
@@ -188,74 +201,81 @@
       />
 
       <div class="pagination">
-        <button class="button secondary compact" type="button" :disabled="page.first" @click="loadTransactions(page.number - 1)">上一页</button>
+        <button class="button secondary compact" type="button" :disabled="loading || page.first" @click="navigatePage(page.number - 1)">上一页</button>
         <span class="muted-text">第 {{ page.number + 1 }} / {{ Math.max(page.totalPages, 1) }} 页，共 {{ page.totalElements }} 条</span>
-        <button class="button secondary compact" type="button" :disabled="page.last || page.totalPages === 0" @click="loadTransactions(page.number + 1)">下一页</button>
+        <button class="button secondary compact" type="button" :disabled="loading || page.last || page.totalPages === 0" @click="navigatePage(page.number + 1)">下一页</button>
       </div>
     </section>
 
     <UiModal v-model="editOpen" title="编辑交易" size="lg">
       <form v-if="editForm" class="form-grid" @submit.prevent="saveEdit">
-        <div class="form-field">
-          <label for="edit-transaction-amount">金额</label>
-          <input id="edit-transaction-amount" v-model="editForm.amount" class="input" type="number" step="0.01" required />
+        <p v-if="editLoading" class="form-field full refresh-status" role="status">正在核对交易详情...</p>
+        <div v-if="editLoadError" class="form-field full refresh-notice error" role="alert">
+          <span>{{ editLoadError }}</span>
+          <button class="button ghost compact" type="button" @click="retryEdit">重新加载详情</button>
         </div>
-        <div class="form-field">
-          <label for="edit-transaction-type">类型</label>
-          <select id="edit-transaction-type" v-model="editForm.type" class="select" @change="onEditTypeChange">
-            <option value="EXPENSE">支出</option>
-            <option value="INCOME">收入</option>
-          </select>
-        </div>
-        <div class="form-field">
-          <label for="edit-transaction-date">日期</label>
-          <input id="edit-transaction-date" v-model="editForm.transactionDate" class="input" type="date" required />
-        </div>
-        <div class="form-field">
-          <label for="edit-transaction-category">分类</label>
-          <CategorySelector
-            input-id="edit-transaction-category"
-            v-model="editForm.categoryId"
-            :categories="flatEditCategories"
-            :allow-empty="false"
-            placeholder="请选择分类"
-            search-placeholder="搜索分类名称或父级..."
-          />
-        </div>
-        <div class="form-field">
-          <label for="edit-transaction-account">账户</label>
-          <select id="edit-transaction-account" v-model="editAccountProxy" class="select">
-            <option value="">未指定账户</option>
-            <option v-for="account in activeAccounts" :key="account.id" :value="account.id">
-              {{ account.icon || defaultAccountIcon(account.type) }} {{ account.name }}
-            </option>
-          </select>
-        </div>
-        <div class="form-field">
-          <label for="edit-transaction-merchant">商户</label>
-          <input id="edit-transaction-merchant" v-model.trim="editForm.parsedMerchant" class="input" />
-        </div>
-        <div class="form-field">
-          <label for="edit-transaction-related-user">相关人员</label>
-          <input id="edit-transaction-related-user" v-model.trim="editForm.relatedUser" class="input" />
-        </div>
-        <div class="form-field full">
-          <label for="edit-transaction-description">描述</label>
-          <input id="edit-transaction-description" v-model.trim="editForm.description" class="input" required />
-        </div>
-        <div class="form-field full">
-          <label for="edit-transaction-note">备注</label>
-          <textarea id="edit-transaction-note" v-model.trim="editForm.note" class="textarea" />
-        </div>
-        <div class="form-field full">
-          <span id="edit-transaction-tags-label" class="field-label">标签</span>
-          <TagSelector labelledby="edit-transaction-tags-label" :tags="tags" :selected-ids="editTagIds" @update:selected-ids="editTagIds = $event" />
-        </div>
+        <fieldset class="form-grid edit-fields" :disabled="editLoading || savingEdit || !!editLoadError" :inert="editLoading || savingEdit || !!editLoadError ? true : undefined">
+          <div class="form-field">
+            <label for="edit-transaction-amount">金额</label>
+            <input id="edit-transaction-amount" v-model="editForm.amount" class="input" type="number" step="0.01" required />
+          </div>
+          <div class="form-field">
+            <label for="edit-transaction-type">类型</label>
+            <select id="edit-transaction-type" v-model="editForm.type" class="select" @change="onEditTypeChange">
+              <option value="EXPENSE">支出</option>
+              <option value="INCOME">收入</option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="edit-transaction-date">日期</label>
+            <input id="edit-transaction-date" v-model="editForm.transactionDate" class="input" type="date" required />
+          </div>
+          <div class="form-field">
+            <label for="edit-transaction-category">分类</label>
+            <CategorySelector
+              input-id="edit-transaction-category"
+              v-model="editForm.categoryId"
+              :categories="flatEditCategories"
+              :allow-empty="false"
+              placeholder="请选择分类"
+              search-placeholder="搜索分类名称或父级..."
+            />
+          </div>
+          <div class="form-field">
+            <label for="edit-transaction-account">账户</label>
+            <select id="edit-transaction-account" v-model="editAccountProxy" class="select">
+              <option value="">未指定账户</option>
+              <option v-for="account in activeAccounts" :key="account.id" :value="account.id">
+                {{ account.icon || defaultAccountIcon(account.type) }} {{ account.name }}
+              </option>
+            </select>
+          </div>
+          <div class="form-field">
+            <label for="edit-transaction-merchant">商户</label>
+            <input id="edit-transaction-merchant" v-model.trim="editForm.parsedMerchant" class="input" />
+          </div>
+          <div class="form-field">
+            <label for="edit-transaction-related-user">相关人员</label>
+            <input id="edit-transaction-related-user" v-model.trim="editForm.relatedUser" class="input" />
+          </div>
+          <div class="form-field full">
+            <label for="edit-transaction-description">描述</label>
+            <input id="edit-transaction-description" v-model.trim="editForm.description" class="input" required />
+          </div>
+          <div class="form-field full">
+            <label for="edit-transaction-note">备注</label>
+            <textarea id="edit-transaction-note" v-model.trim="editForm.note" class="textarea" />
+          </div>
+          <div class="form-field full">
+            <span id="edit-transaction-tags-label" class="field-label">标签</span>
+            <TagSelector labelledby="edit-transaction-tags-label" :tags="tags" :selected-ids="editTagIds" @update:selected-ids="editTagIds = $event" />
+          </div>
+        </fieldset>
         <div class="form-field full">
           <MessageBanner :message="editMessage.text" :type="editMessage.type" @dismissed="clearEditMessage" />
         </div>
         <div class="form-field full row-actions">
-          <button class="button" type="submit" :disabled="savingEdit">保存</button>
+          <button class="button" type="submit" :disabled="savingEdit || editLoading || !!editLoadError">{{ savingEdit ? '保存中...' : '保存' }}</button>
           <button class="button secondary" type="button" @click="editOpen = false">取消</button>
         </div>
       </form>
@@ -288,16 +308,17 @@
     </UiModal>
 
     <RecurringBillsModal v-model="recurringOpen" :can-edit="ledger.canEdit.value" @generated="onRecurringGenerated" />
-  </AppShell>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter, type LocationQuery } from 'vue-router'
 import { CalendarClock, ChevronDown, Download, SlidersHorizontal, Upload, X } from 'lucide-vue-next'
 import { accountsApi, categoriesApi, tagsApi, transactionsApi } from '@/api'
 import { flattenCategories } from '@/utils/category'
-import AppShell from '@/components/AppShell.vue'
+import SkeletonBlock from '@/components/SkeletonBlock.vue'
+import { useDataRefresh } from '@/composables/useDataRefresh'
 import CategorySelector from '@/components/CategorySelector.vue'
 import MessageBanner from '@/components/MessageBanner.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -308,13 +329,21 @@ import UiModal from '@/components/UiModal.vue'
 import { useConfirm } from '@/composables/useConfirm'
 import { useMessage } from '@/composables/useMessage'
 import { useLedgerStore } from '@/stores/ledger'
-import type { Account, Category, ImportResult, PageResponse, Tag, Transaction, TransactionFilters, UpdateTransactionRequest } from '@/types'
+import type { AccountOption, Category, ImportResult, PageResponse, Tag, Transaction, TransactionFilters, UpdateTransactionRequest } from '@/types'
 import { defaultAccountIcon, downloadBlob } from '@/utils/format'
-import { hydrateFiltersFromQuery, normalizedQueryKey } from '@/utils/transactionQuery'
+import { hydrateFiltersFromQuery, normalizedQueryKey, toTransactionQuery } from '@/utils/transactionQuery'
 
 const ledger = useLedgerStore()
 const route = useRoute()
+const router = useRouter()
 const loading = ref(false)
+const hasLoaded = ref(false)
+const listError = ref('')
+const referenceError = ref('')
+const requestedPage = ref(0)
+const appliedFilters = ref<TransactionFilters>({ size: 20 })
+const editLoading = ref(false)
+const editLoadError = ref('')
 const savingEdit = ref(false)
 const editOpen = ref(false)
 const importOpen = ref(false)
@@ -327,9 +356,10 @@ const isMobileFilters = ref(false)
 const importFile = ref<File | null>(null)
 const importResult = ref<ImportResult | null>(null)
 const tags = ref<Tag[]>([])
-const accounts = ref<Account[]>([])
+const accounts = ref<AccountOption[]>([])
 const categories = ref<Category[]>([])
 const editCategories = ref<Category[]>([])
+const editAllCategories = ref<Category[]>([])
 const editForm = ref<Partial<Transaction> | null>(null)
 const editTagIds = ref<number[]>([])
 const filters = reactive<TransactionFilters>({
@@ -409,19 +439,33 @@ const editAccountProxy = computed({
   }
 })
 let mobileFilterMedia: MediaQueryList | undefined
+let listSequence = 0
+let editSequence = 0
+let pendingList: { key: string; promise: Promise<void> } | null = null
 
-onMounted(async () => {
+onMounted(() => {
   mobileFilterMedia = window.matchMedia('(max-width: 820px)')
   syncMobileFilterState()
   mobileFilterMedia.addEventListener('change', syncMobileFilterState)
-  await Promise.all([loadTags(), loadAccounts(), loadCategories()]).catch((error: unknown) => {
-    showError(error, '筛选数据加载失败，请刷新重试')
-  })
 })
 
-watch(() => route.query, hydrateAndLoad, { immediate: true })
+hydrateRoute()
+useDataRefresh(async () => {
+  hydrateRoute()
+  await Promise.all([loadTransactions(), loadFilterData()])
+})
+watch(() => route.query, () => {
+  if (route.name && route.name !== 'transactions') return
+  if (hydrateRoute()) void loadTransactions()
+})
+watch(editOpen, open => {
+  if (!open) editSequence++
+})
 
 onBeforeUnmount(() => {
+  listSequence++
+  editSequence++
+  clearDeleteTimer()
   mobileFilterMedia?.removeEventListener('change', syncMobileFilterState)
 })
 
@@ -451,28 +495,70 @@ function applyHydratedFilters(next: TransactionFilters): void {
   searchKeyword.value = next.keyword || ''
 }
 
-function hydrateAndLoad(): void {
-  const key = normalizedQueryKey(route.query)
-  if (key === lastHydratedKey.value) return
-  lastHydratedKey.value = key
-  applyHydratedFilters(hydrateFiltersFromQuery(route.query))
-  void loadTransactions(0)
+function queryPage(query: LocationQuery): number {
+  const value = Number(Array.isArray(query.page) ? query.page[0] : query.page)
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0
 }
 
-async function loadTransactions(pageNumber = page.number): Promise<void> {
+function hydrateRoute(): boolean {
+  if (route.name && route.name !== 'transactions') return false
+  const nextPage = queryPage(route.query)
+  const nextSort = route.query.sort === 'asc' ? 'asc' : 'desc'
+  const key = `${normalizedQueryKey(route.query)}:${nextPage}:${nextSort}`
+  if (key === lastHydratedKey.value) return false
+  lastHydratedKey.value = key
+  appliedFilters.value = hydrateFiltersFromQuery(route.query)
+  applyHydratedFilters(appliedFilters.value)
+  requestedPage.value = nextPage
+  sortDirection.value = nextSort
+  return true
+}
+
+async function navigatePage(pageNumber: number): Promise<void> {
+  const query = toTransactionQuery(currentFilterParams())
+  if (filters.createdBy) query.createdBy = filters.createdBy
+  if (pageNumber > 0) query.page = String(pageNumber)
+  if (sortDirection.value === 'asc') query.sort = 'asc'
+  const key = `${normalizedQueryKey(query as LocationQuery)}:${pageNumber}:${sortDirection.value}`
+  if (key === lastHydratedKey.value) {
+    await loadTransactions(pageNumber)
+    return
+  }
+  await router.push({ name: 'transactions', query })
+}
+
+function loadTransactions(pageNumber = requestedPage.value): Promise<void> {
+  const params = { ...appliedFilters.value, page: pageNumber, sort: `transactionDate,${sortDirection.value}` }
+  const key = JSON.stringify(params)
+  if (pendingList?.key === key) return pendingList.promise
+  const sequence = ++listSequence
+  requestedPage.value = pageNumber
   loading.value = true
-  try {
-    // 统一使用 list API，支持搜索+筛选组合（AND逻辑）
-    const result = await transactionsApi.list({
-      ...currentFilterParams(),
-      page: pageNumber,
-      sort: `transactionDate,${sortDirection.value}`
-    })
-    Object.assign(page, result)
-  } catch (error) {
-    showError(error)
-  } finally {
-    loading.value = false
+  listError.value = ''
+  const promise = (async () => {
+    try {
+      const result = await transactionsApi.list(params)
+      if (sequence !== listSequence) return
+      Object.assign(page, result)
+      hasLoaded.value = true
+    } catch {
+      if (sequence === listSequence) listError.value = hasLoaded.value ? '账单更新失败，当前保留上次结果。' : '账单加载失败，请检查网络后重试。'
+    } finally {
+      if (sequence === listSequence) {
+        loading.value = false
+        pendingList = null
+      }
+    }
+  })()
+  pendingList = { key, promise }
+  return promise
+}
+
+async function loadFilterData(): Promise<void> {
+  referenceError.value = ''
+  const results = await Promise.allSettled([loadTags(), loadAccounts(), loadCategories()])
+  if (results.some(result => result.status === 'rejected')) {
+    referenceError.value = '部分筛选选项加载失败，已有账单仍可查看。'
   }
 }
 
@@ -488,7 +574,7 @@ async function loadTags(): Promise<void> {
 }
 
 async function loadAccounts(): Promise<void> {
-  accounts.value = await accountsApi.list()
+  accounts.value = await accountsApi.options()
 }
 
 async function loadCategories(): Promise<void> {
@@ -497,7 +583,7 @@ async function loadCategories(): Promise<void> {
 
 function applyFilters(): void {
   filtersOpen.value = false
-  void loadTransactions(0)
+  navigatePage(0)
 }
 
 function resetFilters(): void {
@@ -512,13 +598,12 @@ function resetFilters(): void {
   filters.maxAmount = undefined
   filters.createdBy = ''
   searchKeyword.value = ''
-  lastHydratedKey.value = ''
-  void loadTransactions(0)
+  navigatePage(0)
 }
 
 function toggleSort(): void {
   sortDirection.value = sortDirection.value === 'desc' ? 'asc' : 'desc'
-  void loadTransactions(0)
+  navigatePage(0)
 }
 
 async function openEdit(transaction: Transaction): Promise<void> {
@@ -526,38 +611,48 @@ async function openEdit(transaction: Transaction): Promise<void> {
     show('error', '转账不能通过普通交易表单编辑。')
     return
   }
+  const sequence = ++editSequence
+  editForm.value = { ...transaction }
+  editTagIds.value = transaction.tags?.map(tag => tag.id) || []
+  editCategories.value = categories.value.filter(category => category.type === transaction.type)
+  editLoadError.value = ''
+  clearEditMessage()
+  editLoading.value = true
+  editOpen.value = true
   try {
-    const detail = await transactionsApi.get(transaction.id)
+    const [detail, allCategories] = await Promise.all([
+      transactionsApi.get(transaction.id),
+      categoriesApi.list()
+    ])
+    if (sequence !== editSequence || !editOpen.value) return
     if (detail.type === 'TRANSFER') {
-      show('error', '转账不能通过普通交易表单编辑。')
+      editLoadError.value = '这笔交易已变为转账，请关闭面板后刷新账单。'
       return
     }
     editForm.value = { ...detail }
     editTagIds.value = detail.tags?.map(tag => tag.id) || []
-    await loadEditCategories()
-    clearEditMessage()
-    editOpen.value = true
-  } catch (error) {
-    showError(error, '交易详情加载失败，请稍后重试')
+    editAllCategories.value = allCategories
+    onEditTypeChange()
+  } catch {
+    if (sequence === editSequence) editLoadError.value = '详情加载失败，重试成功后即可编辑。'
+  } finally {
+    if (sequence === editSequence) editLoading.value = false
   }
 }
 
-async function loadEditCategories(): Promise<void> {
-  if (!editForm.value?.type) return
-  editCategories.value = await categoriesApi.list(editForm.value.type)
+function retryEdit(): void {
+  if (editForm.value?.id) void openEdit(editForm.value as Transaction)
 }
 
-/** 编辑弹窗内切换类型时重载分类（弹窗已打开，报错落弹窗内横幅） */
-async function onEditTypeChange(): Promise<void> {
-  try {
-    await loadEditCategories()
-  } catch (error) {
-    showEditError(error, '分类加载失败，请稍后重试')
+function onEditTypeChange(): void {
+  editCategories.value = editAllCategories.value.filter(category => category.type === editForm.value?.type)
+  if (editForm.value?.categoryId && !flattenCategories(editCategories.value).some(category => category.id === editForm.value?.categoryId)) {
+    editForm.value.categoryId = undefined
   }
 }
 
 async function saveEdit(): Promise<void> {
-  if (!editForm.value?.id) return
+  if (!editForm.value?.id || editLoading.value || savingEdit.value || editLoadError.value) return
   if (!editForm.value.categoryId) {
     showEdit('error', '请选择分类后再保存。')
     return
@@ -578,10 +673,10 @@ async function saveEdit(): Promise<void> {
       note: editForm.value.note,
       relatedUser: editForm.value.relatedUser,
       categoryId: editForm.value.categoryId!,
-      accountId: editForm.value.accountId
+      accountId: editForm.value.accountId,
+      tagIds: editTagIds.value
     }
     await transactionsApi.update(editForm.value.id, payload)
-    await transactionsApi.updateTags(editForm.value.id, editTagIds.value)
     editOpen.value = false
     showSuccess('交易记录已更新。')
     await loadTransactions()
@@ -666,7 +761,7 @@ async function submitImport(): Promise<void> {
   try {
     importResult.value = await transactionsApi.import(importFile.value)
     showImportSuccess('CSV 导入完成。')
-    await loadTransactions(0)
+    await navigatePage(0)
   } catch (error) {
     showImportError(error)
   } finally {
@@ -679,12 +774,17 @@ async function onRecurringGenerated(): Promise<void> {
     loadAccounts().catch((error: unknown) => {
       showError(error, '账户数据刷新失败，请稍后重试')
     }),
-    loadTransactions(0)
+    navigatePage(0)
   ])
 }
 </script>
 
 <style scoped>
+.refresh-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--color-danger-text); }
+.refresh-status { margin: 0; color: var(--color-muted); font-size: 14px; }
+.transaction-skeleton { display: grid; gap: 12px; }
+.transaction-skeleton-row { display: grid; grid-template-columns: 40px minmax(0, 1fr) 62px; align-items: center; gap: 14px; padding: 20px 14px; background: var(--color-surface); border-radius: var(--radius-md); }
+.edit-fields { grid-column: 1 / -1; min-width: 0; border: 0; padding: 0; margin: 0; }
 /* 搜索输入框容器 */
 .search-input-wrapper {
   position: relative;

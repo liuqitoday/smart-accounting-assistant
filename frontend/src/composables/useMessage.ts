@@ -43,7 +43,10 @@ export function useMessage() {
   }
 
   function showError(error: unknown, fallback = '操作失败，请稍后重试'): void {
-    show('error', error instanceof ApiError ? error.message || fallback : fallback)
+    show('error', error instanceof ApiError ? error.message || fallback
+      : error instanceof DOMException && error.name === 'TimeoutError' ? error.message
+        : error instanceof TypeError ? '网络连接中断，已填写的内容会保留，请联网后重试'
+          : fallback)
   }
 
   function clear(): void {

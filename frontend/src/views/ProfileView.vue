@@ -1,5 +1,5 @@
 <template>
-  <AppShell>
+  <div class="view-page">
     <PageHeader title="我的" subtitle="管理账户、标签和账本,切换当前记账空间。" />
 
     <section class="section-stack">
@@ -21,6 +21,11 @@
       </div>
 
       <nav class="panel menu-list">
+        <button v-if="!install.installed.value" class="menu-item menu-button" type="button" @click="install.install()">
+          <span class="menu-icon"><Smartphone /></span>
+          <span class="menu-text"><strong>添加到桌面</strong><small>像 App 一样打开，随时记一笔</small></span>
+          <ChevronRight class="menu-chevron" />
+        </button>
         <RouterLink v-for="item in menuItems" :key="item.to" class="menu-item" :to="item.to">
           <span class="menu-icon" :style="{ background: item.bg }">
             <component :is="item.icon" />
@@ -47,14 +52,20 @@
     </section>
 
     <ChangePasswordModal v-model="passwordModalOpen" @changed="handlePasswordChanged" />
-  </AppShell>
+    <UiModal v-model="install.instructions.value" title="添加到桌面" size="sm">
+      <p>在 iPhone 或 iPad 的 Safari 中打开，点击分享按钮，再选择「添加到主屏幕」。</p>
+      <p>在 Android 的 Chrome 中，打开浏览器菜单，选择「安装应用」或「添加到主屏幕」。</p>
+      <p class="muted-text">安装后可独立打开；离线时可查看最近数据、保存草稿和普通收支账目。</p>
+    </UiModal>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { BookOpen, ChevronRight, KeyRound, Landmark, Tags } from 'lucide-vue-next'
-import AppShell from '@/components/AppShell.vue'
+import { BookOpen, ChevronRight, KeyRound, Landmark, Tags, Smartphone } from 'lucide-vue-next'
+import UiModal from '@/components/UiModal.vue'
+import { useInstall } from '@/composables/useInstall'
 import ChangePasswordModal from '@/components/ChangePasswordModal.vue'
 import LedgerSelector from '@/components/LedgerSelector.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -66,6 +77,7 @@ const router = useRouter()
 const auth = useAuthStore()
 const ledger = useLedgerStore()
 const passwordModalOpen = ref(false)
+const install = useInstall()
 
 const avatarChar = computed(() => (auth.state.username || '友').slice(0, 1).toUpperCase())
 

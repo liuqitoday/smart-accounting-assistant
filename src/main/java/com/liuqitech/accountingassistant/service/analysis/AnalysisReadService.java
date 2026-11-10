@@ -14,8 +14,12 @@ import com.liuqitech.accountingassistant.enums.AnalysisSortField;
 import com.liuqitech.accountingassistant.enums.AnalysisTimeGrain;
 import com.liuqitech.accountingassistant.enums.TransactionType;
 import com.liuqitech.accountingassistant.util.SqlLike;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.RowCallbackHandler;
 import org.springframework.stereotype.Service;
+import org.sqlite.SQLiteErrorCode;
+import org.sqlite.SQLiteException;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -67,6 +71,40 @@ public class AnalysisReadService {
         return new AnalysisAggregateFact(scale(fact.amount()), fact.count());
     }
 
+    /**
+     * 当前期与紧邻的上一同期一次扫描完成；日期列保持裸比较以使用账本日期索引。
+     */
+    public SummaryAmounts summary(Long ledgerId, LocalDate currentStart, LocalDate currentEnd,
+                                  LocalDate previousStart) {
+        String sql = "SELECT CASE WHEN t.transaction_date >= ? THEN 1 ELSE 0 END AS current_period, "
+            + "t.type AS tx_type, COALESCE(SUM(t.amount), 0) AS amount, COUNT(*) AS cnt "
+            + "FROM transactions t WHERE t.ledger_id = ? AND t.deleted_at IS NULL "
+            + "AND t.type IN ('INCOME', 'EXPENSE') AND t.transaction_date BETWEEN ? AND ? "
+            + "GROUP BY current_period, t.type";
+        List<SummaryRow> rows = jdbcTemplate.query(sql,
+            new Object[] {currentStart.toString(), ledgerId, previousStart.toString(), currentEnd.toString()},
+            (rs, rowNum) -> new SummaryRow(rs.getBoolean("current_period"),
+                rs.getString("tx_type"), scale(rs.getBigDecimal("amount")), rs.getLong("cnt")));
+
+        BigDecimal income = ZERO;
+        BigDecimal expense = ZERO;
+        BigDecimal previousIncome = ZERO;
+        BigDecimal previousExpense = ZERO;
+        long count = 0;
+        for (SummaryRow row : rows) {
+            if (row.current()) {
+                count += row.count();
+                if ("INCOME".equals(row.type())) income = row.amount();
+                else expense = row.amount();
+            } else if ("INCOME".equals(row.type())) {
+                previousIncome = row.amount();
+            } else {
+                previousExpense = row.amount();
+            }
+        }
+        return new SummaryAmounts(income, expense, count, previousIncome, previousExpense);
+    }
+
     public AnalysisBreakdownFact breakdown(Long ledgerId, NormalizedAnalysisQuery query) {
         Objects.requireNonNull(query, "query");
         AnalysisDimension dimension = Objects.requireNonNull(query.dimension(), "dimension");
@@ -111,38 +149,42 @@ public class AnalysisReadService {
             return new AnalysisTrendFact(List.of());
         }
 
-        StringBuilder sql = new StringBuilder(
-            "SELECT t.transaction_date AS tx_date, t.type AS tx_type, t.amount AS amount ")
-            .append("FROM transactions t WHERE ");
+        StringBuilder filters = new StringBuilder("FROM transactions t WHERE ");
         List<Object> params = new ArrayList<>();
-        appendLedgerAndBaseFilters(sql, params, ledgerId, query);
-        appendDateRange(sql, params, query);
-        appendQueryFilters(sql, params, ledgerId, query);
-
-        List<RawTrendRow> rawRows = jdbcTemplate.query(
-            sql.toString(), params.toArray(), (rs, rowNum) -> new RawTrendRow(
-                LocalDate.parse(rs.getString("tx_date")),
-                rs.getString("tx_type"),
-                scale(rs.getBigDecimal("amount"))));
+        appendLedgerAndBaseFilters(filters, params, ledgerId, query);
+        appendDateRange(filters, params, query);
+        appendQueryFilters(filters, params, ledgerId, query);
+        String sql = "SELECT " + trendPeriodExpr(grain) + " AS period_label, t.type AS tx_type, "
+            + "COALESCE(SUM(" + roundedTrendCentsExpr() + "), 0) AS amount_cents, COUNT(*) AS cnt "
+            + filters + "GROUP BY period_label, t.type";
 
         Map<String, BucketAcc> byPeriod = new LinkedHashMap<>();
         for (String bucket : buckets) {
             byPeriod.put(bucket, new BucketAcc());
         }
-        for (RawTrendRow row : rawRows) {
-            String period = periodLabel(row.date, grain);
-            BucketAcc acc = byPeriod.get(period);
-            if (acc == null) {
-                continue;
+        try {
+            List<TrendBucketRow> rows = jdbcTemplate.query(
+                sql, params.toArray(), (rs, rowNum) -> new TrendBucketRow(
+                    rs.getString("period_label"), rs.getString("tx_type"),
+                    BigDecimal.valueOf(rs.getLong("amount_cents"), 2), rs.getLong("cnt")));
+            for (TrendBucketRow row : rows) {
+                BucketAcc acc = byPeriod.get(row.period());
+                if (acc == null) continue;
+                acc.count += row.count();
+                if ("INCOME".equals(row.type())) {
+                    acc.income = row.amount();
+                    acc.incomeCount = row.count();
+                } else if ("EXPENSE".equals(row.type())) {
+                    acc.expense = row.amount();
+                    acc.expenseCount = row.count();
+                }
             }
-            acc.count++;
-            if ("INCOME".equals(row.type)) {
-                acc.income = acc.income.add(row.amount);
-                acc.incomeCount++;
-            } else if ("EXPENSE".equals(row.type)) {
-                acc.expense = acc.expense.add(row.amount);
-                acc.expenseCount++;
-            }
+        } catch (DataAccessException error) {
+            if (!isSqliteIntegerOverflow(error)) throw error;
+            // SQLite reports overflow instead of silently converting an integer SUM to REAL.
+            // Extremely large totals retain the previous exact BigDecimal behavior. Stream rows
+            // into the bounded bucket map; ordinary totals still use one grouped SQL query.
+            accumulateExactTrend(filters.toString(), params, grain, byPeriod);
         }
 
         AnalysisMetric metric = query.metric() == null ? AnalysisMetric.SUM : query.metric();
@@ -356,6 +398,60 @@ public class AnalysisReadService {
         };
     }
 
+    private String trendPeriodExpr(AnalysisTimeGrain grain) {
+        return switch (grain) {
+            case DAY -> "t.transaction_date";
+            // SQLite %w 从周日 0 开始；减去偏移获得周一，跨月、跨年仍与 Java 桶标签一致。
+            case WEEK -> "date(t.transaction_date, '-' || "
+                + "((CAST(strftime('%w', t.transaction_date) AS INTEGER) + 6) % 7) || ' days')";
+            case MONTH -> "substr(t.transaction_date, 1, 7)";
+            case QUARTER -> "substr(t.transaction_date, 1, 4) || '-Q' || "
+                + "((CAST(substr(t.transaction_date, 6, 2) AS INTEGER) + 2) / 3)";
+            case YEAR -> "substr(t.transaction_date, 1, 4)";
+        };
+    }
+
+    private String roundedTrendCentsExpr() {
+        // SQLite ROUND(1.005, 2) 会受二进制浮点影响得到 1.00；原 JDBC BigDecimal
+        // 映射按十进制 HALF_UP 得到 1.01。按同一文本表示检查第三位小数，保留旧行的
+        // 逐笔舍入语义。直接拼整数分，避免 1.15 * 100 = 114.999... 的误差；
+        // 聚合也用整数，不能把每笔舍入后交给浮点 SUM，否则大额合计会丢分。
+        String text = "CAST(t.amount AS TEXT)";
+        String dot = "instr(" + text + ", '.')";
+        return "CASE WHEN " + dot + " > 0 AND instr(lower(" + text + "), 'e') = 0 "
+            + "THEN CAST(replace(substr(" + text + " || '00', 1, " + dot + " + 2), '.', '') AS INTEGER) "
+            + "+ CASE WHEN substr(" + text + ", " + dot + " + 3, 1) >= '5' "
+            + "THEN CASE WHEN t.amount < 0 THEN -1 ELSE 1 END ELSE 0 END "
+            + "ELSE CAST(ROUND(t.amount * 100, 0) AS INTEGER) END";
+    }
+
+    private boolean isSqliteIntegerOverflow(DataAccessException error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLiteException sqlite
+                    && sqlite.getResultCode() == SQLiteErrorCode.SQLITE_ERROR
+                    && sqlite.getMessage().contains("integer overflow")) return true;
+        }
+        return false;
+    }
+
+    private void accumulateExactTrend(String filters, List<Object> params, AnalysisTimeGrain grain,
+                                      Map<String, BucketAcc> byPeriod) {
+        jdbcTemplate.query("SELECT t.transaction_date, t.type, t.amount " + filters, params.toArray(),
+            (RowCallbackHandler) rs -> {
+                BucketAcc acc = byPeriod.get(periodLabel(LocalDate.parse(rs.getString("transaction_date")), grain));
+                if (acc == null) return;
+                BigDecimal amount = scale(rs.getBigDecimal("amount"));
+                acc.count++;
+                if ("INCOME".equals(rs.getString("type"))) {
+                    acc.income = acc.income.add(amount);
+                    acc.incomeCount++;
+                } else if ("EXPENSE".equals(rs.getString("type"))) {
+                    acc.expense = acc.expense.add(amount);
+                    acc.expenseCount++;
+                }
+            });
+    }
+
     private BigDecimal trendValue(AnalysisMetric metric, TransactionType type, BucketAcc acc) {
         return switch (metric) {
             case COUNT -> BigDecimal.valueOf(selectedCount(type, acc)).setScale(2, RoundingMode.HALF_UP);
@@ -402,7 +498,12 @@ public class AnalysisReadService {
     private record DimensionSql(String idExpr, String labelExpr, String parentLabelExpr,
                                 String join, List<Object> joinParams) {}
 
-    private record RawTrendRow(LocalDate date, String type, BigDecimal amount) {}
+    public record SummaryAmounts(BigDecimal income, BigDecimal expense, long count,
+                                 BigDecimal previousIncome, BigDecimal previousExpense) {}
+
+    private record SummaryRow(boolean current, String type, BigDecimal amount, long count) {}
+
+    private record TrendBucketRow(String period, String type, BigDecimal amount, long count) {}
 
     private static final class BucketAcc {
         private BigDecimal income = ZERO;

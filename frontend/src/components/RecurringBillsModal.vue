@@ -255,7 +255,7 @@ import { useConfirm } from '@/composables/useConfirm'
 import { useMessage } from '@/composables/useMessage'
 import { flattenCategories } from '@/utils/category'
 import { defaultAccountIcon, formatDate, formatMoney, today, toNumber } from '@/utils/format'
-import type { Account, Category, GenerateRecurringBillsResult, RecurringBill, SaveRecurringBillRequest, Tag } from '@/types'
+import type { AccountOption, Category, GenerateRecurringBillsResult, RecurringBill, SaveRecurringBillRequest, Tag } from '@/types'
 
 const props = defineProps<{
   modelValue: boolean
@@ -274,7 +274,7 @@ const generatingAll = ref(false)
 const generatingRuleId = ref<number | null>(null)
 const editingId = ref<number | null>(null)
 const rules = ref<RecurringBill[]>([])
-const accounts = ref<Account[]>([])
+const accounts = ref<AccountOption[]>([])
 const tags = ref<Tag[]>([])
 const allCategories = ref<Category[]>([])
 const formCategories = ref<Category[]>([])
@@ -325,7 +325,7 @@ async function loadAll(): Promise<void> {
   try {
     const [ruleResult, accountResult, tagResult, categoryResult] = await Promise.all([
       recurringBillsApi.list(),
-      accountsApi.list(),
+      accountsApi.options(),
       tagsApi.list(),
       categoriesApi.list()
     ])

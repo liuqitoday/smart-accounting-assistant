@@ -1,6 +1,7 @@
 import { del, get, getOptional, post, put, queryString, rawFetch } from '@/api/http'
 import type {
   Account,
+  AccountOption,
   AccountType,
   AnalysisChatResponse,
   AnalysisMessage,
@@ -47,8 +48,8 @@ export const authApi = {
 }
 
 export const ledgerApi = {
-  list() {
-    return get<Ledger[]>('/api/ledgers')
+  list(force = false) {
+    return get<Ledger[]>('/api/ledgers', undefined, { force })
   },
   create(payload: Pick<Ledger, 'name' | 'description' | 'icon' | 'color'>) {
     return post<Ledger>('/api/ledgers', payload)
@@ -100,8 +101,8 @@ export const transactionsApi = {
       headers: { 'X-Ledger-Id': String(ledgerId) }
     })
   },
-  parseOnly(text: string) {
-    return post<TransactionParseResponse>('/api/transactions/parse-only', { text })
+  parseOnly(text: string, signal?: AbortSignal) {
+    return post<TransactionParseResponse>('/api/transactions/parse-only', { text }, { signal })
   },
   save(payload: SaveTransactionRequest, ledgerId?: number) {
     return post<TransactionParseResponse>('/api/transactions/save', payload, ledgerId == null
@@ -112,7 +113,7 @@ export const transactionsApi = {
     return get<PageResponse<Transaction>>('/api/transactions', filters as Record<string, unknown>)
   },
   get(id: number) {
-    return get<Transaction>(`/api/transactions/${id}`)
+    return get<Transaction>(`/api/transactions/${id}`, undefined, { force: true })
   },
   update(id: number, payload: UpdateTransactionRequest) {
     return put<Transaction>(`/api/transactions/${id}`, payload)
@@ -183,6 +184,9 @@ export const statisticsApi = {
 }
 
 export const accountsApi = {
+  options() {
+    return get<AccountOption[]>('/api/accounts/options')
+  },
   list() {
     return get<Account[]>('/api/accounts')
   },

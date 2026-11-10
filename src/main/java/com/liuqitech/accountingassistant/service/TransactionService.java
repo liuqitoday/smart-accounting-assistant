@@ -254,6 +254,9 @@ public class TransactionService {
         command.setRelatedUser(request.getRelatedUser());
         command.setAccountId(request.getAccountId());
 
+        // Validate all tags before inserting anything; transaction and tags commit atomically.
+        command.setTags(tagService.findAllByIdsAndLedger(request.getTagIds(), ledgerId));
+
         Transaction savedTransaction = createTransaction(command);
         logger.info("交易记录保存成功: {}", savedTransaction);
 
@@ -357,8 +360,11 @@ public class TransactionService {
             }
 
             Category managedCategory = requireRegularCategory(request.getCategoryId(), request.getType());
+            Set<Tag> updatedTags = request.getTagIds() == null ? null
+                    : tagService.findAllByIdsAndLedger(request.getTagIds(), ledgerId);
             updateExistingTransaction(existingTransaction, request, managedCategory);
             applyAccount(existingTransaction, request.getAccountId(), ledgerId);
+            if (updatedTags != null) existingTransaction.setTags(updatedTags);
             existingTransaction.setCounterAccountId(null);
             Transaction savedTransaction = transactionRepository.save(existingTransaction);
             logger.info("交易记录更新成功: {}", savedTransaction);

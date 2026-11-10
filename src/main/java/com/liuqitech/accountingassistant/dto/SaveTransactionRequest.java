@@ -4,9 +4,12 @@ import com.liuqitech.accountingassistant.enums.TransactionType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
 /**
  * Request for saving a parsed or manually entered transaction.
@@ -39,6 +42,15 @@ public class SaveTransactionRequest {
     private String relatedUser;
     private Long aiSuggestedCategoryId;
     private Long accountId;
+    /** Tags are committed together with the transaction. Omitted means no tags. */
+    @Size(max = 100, message = "标签数量不能超过 100")
+    private List<@NotNull @Positive Long> tagIds;
+
+    /** Stable UUID for retrying one save; scoped to the authenticated user and ledger. */
+    @Size(max = 36, message = "请求标识长度不能超过 36")
+    @Pattern(regexp = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            message = "请求标识必须为 UUID")
+    private String clientRequestId;
 
     public SaveTransactionRequest() {}
 
@@ -145,4 +157,12 @@ public class SaveTransactionRequest {
     public void setAccountId(Long accountId) {
         this.accountId = accountId;
     }
+
+    public List<Long> getTagIds() { return tagIds; }
+
+    public void setTagIds(List<Long> tagIds) { this.tagIds = tagIds; }
+
+    public String getClientRequestId() { return clientRequestId; }
+
+    public void setClientRequestId(String clientRequestId) { this.clientRequestId = clientRequestId; }
 }

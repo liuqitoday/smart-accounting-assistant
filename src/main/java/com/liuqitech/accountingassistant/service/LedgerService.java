@@ -24,6 +24,7 @@ import com.liuqitech.accountingassistant.repository.UserRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
@@ -59,6 +60,7 @@ public class LedgerService {
     private final AnalysisChatMessageRepository analysisChatMessageRepository;
     private final AnalysisChatContextRepository analysisChatContextRepository;
     private final LedgerAccessService ledgerAccessService;
+    private final JdbcTemplate jdbc;
 
     public LedgerService(LedgerRepository ledgerRepository,
                          LedgerMemberRepository ledgerMemberRepository,
@@ -70,7 +72,8 @@ public class LedgerService {
                          RecurringBillRepository recurringBillRepository,
                          AnalysisChatMessageRepository analysisChatMessageRepository,
                          AnalysisChatContextRepository analysisChatContextRepository,
-                         LedgerAccessService ledgerAccessService) {
+                         LedgerAccessService ledgerAccessService,
+                         JdbcTemplate jdbc) {
         this.ledgerRepository = ledgerRepository;
         this.ledgerMemberRepository = ledgerMemberRepository;
         this.userRepository = userRepository;
@@ -82,6 +85,7 @@ public class LedgerService {
         this.analysisChatMessageRepository = analysisChatMessageRepository;
         this.analysisChatContextRepository = analysisChatContextRepository;
         this.ledgerAccessService = ledgerAccessService;
+        this.jdbc = jdbc;
     }
 
     // ==================== 默认账本（注册时调用） ====================
@@ -217,6 +221,7 @@ public class LedgerService {
         ledgerAccessService.requireAccess(username, ledgerId, LedgerRole.OWNER);
 
         recurringBillRepository.deleteByLedgerId(ledgerId);
+        jdbc.update("DELETE FROM transaction_save_receipts WHERE ledger_id = ?", ledgerId);
         transactionRepository.deleteByLedgerId(ledgerId);
         accountRepository.deleteByLedgerId(ledgerId);
         tagRepository.deleteByLedgerId(ledgerId);

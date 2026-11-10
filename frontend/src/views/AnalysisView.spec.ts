@@ -1,6 +1,6 @@
-import { flushPromises, mount, VueWrapper } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { reactive } from 'vue'
+import { enableAutoUnmount, flushPromises, mount, VueWrapper } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { defineComponent, h, KeepAlive, reactive, ref } from 'vue'
 import { ApiError } from '@/api/http'
 import ResultCard from '@/components/analysis/ResultCard.vue'
 import type { AnalysisMessage, PageResponse, Transaction } from '@/types'
@@ -27,7 +27,7 @@ vi.mock('@/api', () => ({
     export: vi.fn(),
     import: vi.fn(),
   },
-  accountsApi: { list: vi.fn().mockResolvedValue([]) },
+  accountsApi: { list: vi.fn().mockResolvedValue([]), options: vi.fn().mockResolvedValue([]) },
   categoriesApi: { list: vi.fn().mockResolvedValue([]) },
   tagsApi: { list: vi.fn().mockResolvedValue([]) },
 }))
@@ -120,8 +120,11 @@ function emptyMessages(): PageResponse<AnalysisMessage> {
   }
 }
 
+enableAutoUnmount(afterEach)
+
 describe('AnalysisView', () => {
   beforeEach(() => {
+    localStorage.clear()
     chat.mockReset()
     messages.mockReset()
     list.mockReset()
@@ -145,6 +148,58 @@ describe('AnalysisView', () => {
     await flushPromises()
     return wrapper
   }
+
+
+  it('does not submit an Enter used to confirm Chinese input', async () => {
+    chat.mockResolvedValue({ userMessage: userMessage('午餐支出'), assistantMessage: assistantMessageWithFollowUps([]) })
+    const wrapper = await mountAnalysis()
+    const input = wrapper.find('textarea')
+    await input.setValue('午餐支出')
+    await input.trigger('compositionstart')
+    await input.trigger('keydown', { key: 'Enter', isComposing: true })
+    expect(chat).not.toHaveBeenCalled()
+    await input.trigger('compositionend')
+    await input.trigger('keydown', { key: 'Enter', keyCode: 229 })
+    expect(chat).not.toHaveBeenCalled()
+    await input.trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+    expect(chat).toHaveBeenCalledTimes(1)
+  })
+
+  it('restores an unsent draft after the view is mounted again', async () => {
+    const first = await mountAnalysis()
+    await first.find('textarea').setValue('等会儿查询本月餐饮')
+    first.unmount()
+    const restored = await mountAnalysis()
+    expect((restored.find('textarea').element as HTMLTextAreaElement).value).toBe('等会儿查询本月餐饮')
+  })
+
+  it('retains an in-flight response across tab switches without scrolling the other view', async () => {
+    let resolveChat!: (value: unknown) => void
+    chat.mockReturnValueOnce(new Promise(resolve => { resolveChat = resolve }))
+    const visible = ref(true)
+    const Other = defineComponent({ render: () => h('div', '其他页面') })
+    const Host = defineComponent({ render: () => h(KeepAlive, null, { default: () => visible.value ? h(AnalysisView) : h(Other) }) })
+    const wrapper = mount(Host, { global: { stubs: {
+      PageHeader: { template: '<div><slot name="actions" /></div>' },
+      MessageBanner: { template: '<div />' }, UiModal: { template: '<div />' }
+    } } })
+    await flushPromises()
+    await wrapper.find('textarea').setValue('后台继续分析')
+    await wrapper.find('button.send').trigger('click')
+    visible.value = false
+    await flushPromises()
+    const scrollCalls = vi.mocked(window.scrollTo).mock.calls.length
+    resolveChat({ userMessage: userMessage('后台继续分析'), assistantMessage: assistantMessageWithFollowUps(['已返回结果']) })
+    await flushPromises()
+    expect(vi.mocked(window.scrollTo).mock.calls.length).toBe(scrollCalls)
+    expect(wrapper.text()).toContain('其他页面')
+    visible.value = true
+    await flushPromises()
+    expect(wrapper.text()).toContain('已返回结果')
+    expect(chat).toHaveBeenCalledTimes(1)
+    expect(messages).toHaveBeenCalledTimes(1)
+  })
 
   it('optimistically shows the question and exposes server follow-ups', async () => {
     chat.mockResolvedValue({

@@ -18,6 +18,7 @@ import com.liuqitech.accountingassistant.interceptor.LedgerContext;
 import com.liuqitech.accountingassistant.service.AiRateLimitService;
 import com.liuqitech.accountingassistant.service.ImageTransactionService;
 import com.liuqitech.accountingassistant.service.TransactionService;
+import com.liuqitech.accountingassistant.service.TransactionSaveService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.slf4j.Logger;
@@ -49,13 +50,16 @@ public class TransactionController {
     private final TransactionService transactionService;
     private final AiRateLimitService aiRateLimitService;
     private final ImageTransactionService imageTransactionService;
+    private final TransactionSaveService transactionSaveService;
 
     public TransactionController(TransactionService transactionService,
                                  AiRateLimitService aiRateLimitService,
-                                 ImageTransactionService imageTransactionService) {
+                                 ImageTransactionService imageTransactionService,
+                                 TransactionSaveService transactionSaveService) {
         this.transactionService = transactionService;
         this.aiRateLimitService = aiRateLimitService;
         this.imageTransactionService = imageTransactionService;
+        this.transactionSaveService = transactionSaveService;
     }
 
     /** 只暴露功能能力与上传限制，不返回模型凭据。 */
@@ -118,7 +122,7 @@ public class TransactionController {
 
         Long ledgerId = LedgerContext.ledgerId(request);
         String username = LedgerContext.username(request);
-        TransactionParseResponse response = transactionService.saveTransaction(saveRequest, ledgerId, username);
+        TransactionParseResponse response = transactionSaveService.save(saveRequest, ledgerId, username);
         return ApiResponse.success(response, "交易记录保存成功");
     }
 

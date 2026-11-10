@@ -12,6 +12,7 @@ public class SpaForwardController {
             "/dashboard",
             "/transactions",
             "/statistics",
+            "/analysis",
             "/accounts",
             "/tags",
             "/ledgers",

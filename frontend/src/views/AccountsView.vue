@@ -1,5 +1,5 @@
 <template>
-  <AppShell>
+  <div class="view-page">
     <PageHeader title="账户管理" subtitle="管理当前账本下共享的现金、银行卡、网络支付和投资账户。">
       <template #actions>
         <button class="button" type="button" :disabled="!ledger.canEdit.value" @click="openCreate">
@@ -134,20 +134,20 @@
         </div>
       </form>
     </UiModal>
-  </AppShell>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { Plus } from 'lucide-vue-next'
 import { accountsApi } from '@/api'
 import AnimatedNumber from '@/components/AnimatedNumber.vue'
-import AppShell from '@/components/AppShell.vue'
 import ColorSwatches from '@/components/ColorSwatches.vue'
 import MessageBanner from '@/components/MessageBanner.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import UiModal from '@/components/UiModal.vue'
 import { useConfirm } from '@/composables/useConfirm'
+import { useDataRefresh } from '@/composables/useDataRefresh'
 import { useMessage } from '@/composables/useMessage'
 import { useLedgerStore } from '@/stores/ledger'
 import type { Account, AccountType } from '@/types'
@@ -175,7 +175,7 @@ const { confirm } = useConfirm()
 const totalBalance = computed(() => accounts.value.reduce((sum, account) => sum + toNumber(account.currentBalance), 0))
 const activeCount = computed(() => accounts.value.filter(account => account.active).length)
 
-onMounted(loadAccounts)
+useDataRefresh(loadAccounts)
 
 async function loadAccounts(): Promise<void> {
   loading.value = true

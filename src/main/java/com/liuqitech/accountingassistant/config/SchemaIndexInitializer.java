@@ -30,6 +30,7 @@ public class SchemaIndexInitializer implements CommandLineRunner {
     @Override
     public void run(String... args) {
         createPersistentLoginsTable();
+        createTransactionSaveReceipts();
         createUniqueIndexes();
         logger.debug("数据库索引初始化完成");
     }
@@ -44,6 +45,16 @@ public class SchemaIndexInitializer implements CommandLineRunner {
                 + "series VARCHAR(64) PRIMARY KEY, "
                 + "token VARCHAR(64) NOT NULL, "
                 + "last_used TIMESTAMP NOT NULL)");
+    }
+
+    private void createTransactionSaveReceipts() {
+        // A primary key is enforced by SQLite itself; Hibernate ignores @UniqueConstraint there.
+        // Fail startup if this table cannot be created: accepting unsafe retries is not a fallback.
+        jdbc.execute("CREATE TABLE IF NOT EXISTS transaction_save_receipts ("
+                + "ledger_id BIGINT NOT NULL, username VARCHAR(50) NOT NULL, "
+                + "client_request_id VARCHAR(36) NOT NULL, request_hash VARCHAR(64) NOT NULL, "
+                + "response_json TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+                + "PRIMARY KEY (ledger_id, username, client_request_id))");
     }
 
     private void createUniqueIndexes() {

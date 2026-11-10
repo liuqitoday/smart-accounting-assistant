@@ -1,13 +1,14 @@
 <template>
-  <UiModal
+  <component
+    :is="embedded ? 'div' : UiModal"
     :model-value="modelValue"
     title="手动记一笔"
-    subtitle="不想打字描述,直接填表单也行。"
     size="lg"
-    @update:model-value="$emit('update:modelValue', $event)"
+    @update:model-value="requestClose"
   >
     <div class="manual-error-wrap t-input-wrap" :class="{ 'is-error': errorActive }">
-      <p class="message error manual-error-message t-error-msg">{{ errorText }}</p>
+      <p v-if="errorText" class="message error" role="alert">{{ errorText }}</p>
+      <p v-if="!online" class="message info">{{ isTransfer ? '转账需要联网，请保留草稿稍后提交。' : '当前离线，保存后会在联网时自动同步。' }}</p>
 
       <form
         ref="formRef"
@@ -16,9 +17,10 @@
         @input="clearFormError"
         @submit.prevent="submit"
       >
+        <fieldset class="manual-fields" :disabled="saving || !canEdit">
         <div class="form-field">
           <label for="manual-amount">金额</label>
-          <input id="manual-amount" v-model="form.amount" class="input num" type="number" step="0.01" min="0.01" required />
+          <input id="manual-amount" ref="amountInput" inputmode="decimal" v-model="form.amount" class="input num" type="number" step="0.01" min="0.01" required />
         </div>
         <div class="form-field">
           <label for="manual-type">类型</label>
@@ -76,55 +78,61 @@
           </div>
           <div class="form-field">
             <label for="manual-account">账户</label>
-            <select id="manual-account" v-model="form.accountId" class="select">
+            <select id="manual-account" v-model="form.accountId" class="select" @change="draft.accountInitialized = true">
               <option value="">未指定账户</option>
               <option v-for="account in activeAccounts" :key="account.id" :value="account.id">
                 {{ account.icon || defaultAccountIcon(account.type) }} {{ account.name }}
               </option>
             </select>
           </div>
-          <div class="form-field">
-            <label for="manual-merchant">商户</label>
-            <input id="manual-merchant" v-model.trim="form.parsedMerchant" class="input" placeholder="可选" />
-          </div>
-          <div class="form-field">
-            <label for="manual-related-user">相关人员</label>
-            <input id="manual-related-user" v-model.trim="form.relatedUser" class="input" placeholder="可选" />
-          </div>
           <div class="form-field full">
             <label for="manual-description">描述</label>
-            <input id="manual-description" v-model.trim="form.description" class="input" required />
+            <input id="manual-description" v-model.trim="form.description" class="input" placeholder="可选，默认使用分类名称" />
           </div>
         </template>
-
-        <div class="form-field full">
-          <label for="manual-note">备注</label>
-          <textarea id="manual-note" v-model.trim="form.note" class="textarea" placeholder="可选" />
-        </div>
-        <div v-if="!isTransfer" class="form-field full">
-          <span id="manual-tags-label" class="field-label">标签</span>
-          <TagSelector labelledby="manual-tags-label" :tags="tags" :selected-ids="selectedTagIds" @update:selected-ids="selectedTagIds = $event" />
+        <div class="t-acc full" :data-open="String(draft.moreOpen)">
+          <button class="t-acc-head manual-more" type="button" :aria-expanded="draft.moreOpen" aria-controls="manual-extras"
+            @click="draft.moreOpen = !draft.moreOpen">补充信息 · 商户、备注、标签 <ChevronDown class="t-acc-chevron" /></button>
+          <div id="manual-extras" class="t-acc-panel" :aria-hidden="!draft.moreOpen" :inert="draft.moreOpen ? undefined : true">
+            <div class="t-acc-panel-inner"><div class="form-grid manual-extras">
+              <template v-if="!isTransfer">
+                <div class="form-field"><label for="manual-merchant">商户</label><input id="manual-merchant" v-model.trim="form.parsedMerchant" class="input" placeholder="可选" /></div>
+                <div class="form-field"><label for="manual-related-user">相关人员</label><input id="manual-related-user" v-model.trim="form.relatedUser" class="input" placeholder="可选" /></div>
+              </template>
+              <div class="form-field full"><label for="manual-note">备注</label><textarea id="manual-note" v-model.trim="form.note" class="textarea" placeholder="可选" /></div>
+              <div v-if="!isTransfer" class="form-field full">
+                <span id="manual-tags-label" class="field-label">标签</span>
+                <TagSelector labelledby="manual-tags-label" :tags="tags" :selected-ids="draft.tagIds" @update:selected-ids="draft.tagIds = $event" />
+              </div>
+            </div></div>
+          </div>
         </div>
         <div class="form-field full row-actions">
-          <button class="button" type="submit" :disabled="saving">
+          <button class="button" type="submit" :disabled="saving || !canEdit || (isTransfer && !online)">
             <span v-if="saving" class="t-shimmer button-shimmer" data-text="保存中...">保存中...</span>
-            <template v-else>{{ isTransfer ? '确认转账' : '记下这一笔' }}</template>
+            <template v-else>{{ isTransfer ? '确认转账' : online ? '记下这一笔' : '保存，联网后同步' }}</template>
           </button>
-          <button class="button secondary" type="button" @click="$emit('update:modelValue', false)">取消</button>
+          <button v-if="!embedded" class="button secondary" type="button" :disabled="saving" @click="requestClose(false)">稍后再记</button>
         </div>
+        </fieldset>
       </form>
     </div>
-  </UiModal>
+  </component>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, reactive, ref, watch } from 'vue'
-import { categoriesApi, transactionsApi, transfersApi } from '@/api'
-import { ApiError } from '@/api/http'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { categoriesApi, transfersApi } from '@/api'
+import { ChevronDown } from 'lucide-vue-next'
+import { useDraft } from '@/composables/useDraft'
+import { useConnectivity } from '@/composables/useConnectivity'
+import { useLedgerStore } from '@/stores/ledger'
+import { saveOrQueueTransaction } from '@/stores/outbox'
+import { identifySubmission, type SubmissionIdentity } from '@/utils/submission'
 import CategorySelector from '@/components/CategorySelector.vue'
 import TagSelector from '@/components/TagSelector.vue'
 import UiModal from '@/components/UiModal.vue'
-import type { Account, Category, SaveTransactionRequest, Tag, TransactionType } from '@/types'
+import type { AccountOption, Category, SaveTransactionRequest, Tag, TransactionType } from '@/types'
 import { resolveDefaultAccountId } from '@/utils/account'
 import { flattenCategories } from '@/utils/category'
 import { cssMs } from '@/utils/css'
@@ -132,29 +140,32 @@ import { defaultAccountIcon, today, toNumber } from '@/utils/format'
 
 const props = defineProps<{
   modelValue: boolean
-  accounts: Account[]
+  accounts: AccountOption[]
+  embedded?: boolean
   tags: Tag[]
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
-  saved: []
+  saved: [result?: { queued: boolean }]
+  busy: [value: boolean]
 }>()
 
-const form = reactive({
-  amount: '',
-  type: 'EXPENSE' as TransactionType,
-  transactionDate: today(),
-  categoryId: '' as number | '',
-  accountId: '' as number | '',
-  fromAccountId: '' as number | '',
-  toAccountId: '' as number | '',
-  parsedMerchant: '',
-  relatedUser: '',
-  description: '',
-  note: ''
+const ledger = useLedgerStore()
+const ledgerId = ledger.state.activeLedger?.id
+const { online } = useConnectivity()
+const { draft, clear } = useDraft('manual-transaction', {
+  form: {
+    amount: '', type: 'EXPENSE' as TransactionType, transactionDate: today(),
+    categoryId: '' as number | '', accountId: '' as number | '', fromAccountId: '' as number | '', toAccountId: '' as number | '',
+    parsedMerchant: '', relatedUser: '', description: '', note: ''
+  },
+  tagIds: [] as number[], moreOpen: false, accountInitialized: false,
+  submission: { fingerprint: '', key: '' } as SubmissionIdentity
 })
-const selectedTagIds = ref<number[]>([])
+const form = computed(() => draft.value.form)
+const canEdit = computed(() => ledger.canEdit.value && ledger.state.activeLedger?.id === ledgerId)
+const amountInput = ref<HTMLInputElement | null>(null)
 const categories = ref<Category[]>([])
 const saving = ref(false)
 const errorText = ref('')
@@ -164,7 +175,7 @@ const formRef = ref<HTMLFormElement | null>(null)
 let revertTimer: number | undefined
 let shakeTimer: number | undefined
 
-const isTransfer = computed(() => form.type === 'TRANSFER')
+const isTransfer = computed(() => form.value.type === 'TRANSFER')
 const flatCategories = computed(() => flattenCategories(categories.value))
 const activeAccounts = computed(() => props.accounts.filter(account => account.active))
 
@@ -172,36 +183,32 @@ watch(
   () => props.modelValue,
   open => {
     if (open) {
-      resetForm()
+      applyDefaultAccount()
       void loadCategories()
+      void nextTick(() => amountInput.value?.focus({ preventScroll: true }))
     }
-  }
+  }, { immediate: true }
 )
+watch(() => props.accounts, applyDefaultAccount)
+watch(saving, value => emit('busy', value))
 
 onBeforeUnmount(() => {
   clearErrorTimers()
 })
 
-function resetForm(): void {
-  Object.assign(form, {
-    amount: '',
-    type: 'EXPENSE' as TransactionType,
-    transactionDate: today(),
-    categoryId: '',
-    accountId: resolveDefaultAccountId(props.accounts) ?? '',
-    fromAccountId: '',
-    toAccountId: '',
-    parsedMerchant: '',
-    relatedUser: '',
-    description: '',
-    note: ''
-  })
-  selectedTagIds.value = []
-  clearFormError()
+function applyDefaultAccount(): void {
+  if (!draft.value.accountInitialized && props.accounts.length) {
+    form.value.accountId = resolveDefaultAccountId(props.accounts) ?? ''
+    draft.value.accountInitialized = true
+  }
+}
+
+function requestClose(value: boolean): void {
+  if (!saving.value) emit('update:modelValue', value)
 }
 
 async function onTypeChange(): Promise<void> {
-  form.categoryId = ''
+  form.value.categoryId = ''
   await loadCategories()
 }
 
@@ -211,49 +218,49 @@ async function loadCategories(): Promise<void> {
     return
   }
   try {
-    categories.value = await categoriesApi.list(form.type)
+    const type = form.value.type
+    const result = await categoriesApi.list(type)
+    if (form.value.type === type) categories.value = result
   } catch (error) {
     showError(error)
   }
 }
 
 async function submit(): Promise<void> {
+  if (saving.value || !canEdit.value || !ledgerId) return
   if (isTransfer.value) {
     await submitTransfer()
     return
   }
-  if (!form.categoryId || toNumber(form.amount) <= 0 || !form.description) {
-    showFormError('请填写金额、分类和描述后再保存。')
+  if (!form.value.categoryId || !Number.isFinite(Number(form.value.amount)) || toNumber(form.value.amount) <= 0) {
+    showFormError('请填写金额和分类后再保存。')
     return
   }
   saving.value = true
   clearFormError()
   try {
     const payload: SaveTransactionRequest = {
-      amount: form.amount,
-      type: form.type as Exclude<TransactionType, 'TRANSFER'>,
-      description: form.description,
-      originalText: form.description,
-      categoryId: form.categoryId,
-      transactionDate: form.transactionDate,
-      parsedMerchant: form.parsedMerchant || null,
-      relatedUser: form.relatedUser || null,
-      note: form.note || null,
-      accountId: form.accountId === '' ? null : Number(form.accountId),
+      amount: form.value.amount,
+      type: form.value.type as Exclude<TransactionType, 'TRANSFER'>,
+      description: form.value.description || flatCategories.value.find(category => category.id === form.value.categoryId)?.name || '日常记账',
+      originalText: form.value.description || flatCategories.value.find(category => category.id === form.value.categoryId)?.name || '手动记账',
+      categoryId: form.value.categoryId,
+      transactionDate: form.value.transactionDate,
+      parsedMerchant: form.value.parsedMerchant || null,
+      relatedUser: form.value.relatedUser || null,
+      note: form.value.note || null,
+      accountId: form.value.accountId === '' ? null : Number(form.value.accountId),
       confidenceScore: null,
       aiModelUsed: null,
-      aiSuggestedCategoryId: null
+      aiSuggestedCategoryId: null,
+      tagIds: draft.value.tagIds
     }
-    const saved = await transactionsApi.save(payload)
-    if (saved.id && selectedTagIds.value.length) {
-      try {
-        await transactionsApi.updateTags(saved.id, selectedTagIds.value)
-      } catch {
-        // 交易已落库,标签关联失败不阻断关闭,避免重复提交造成重复记账
-      }
+    const result = await saveOrQueueTransaction(identifySubmission(payload, draft.value.submission), ledgerId)
+    clear()
+    if (ledger.state.activeLedger?.id === ledgerId) {
+      emit('update:modelValue', false)
+      emit('saved', result)
     }
-    emit('update:modelValue', false)
-    emit('saved')
   } catch (error) {
     showError(error)
   } finally {
@@ -262,15 +269,16 @@ async function submit(): Promise<void> {
 }
 
 async function submitTransfer(): Promise<void> {
-  if (form.fromAccountId === '' || form.toAccountId === '') {
+  if (!online.value) { showFormError('转账需要联网，请稍后再试。'); return }
+  if (form.value.fromAccountId === '' || form.value.toAccountId === '') {
     showFormError('请选择转出和转入账户。')
     return
   }
-  if (form.fromAccountId === form.toAccountId) {
+  if (form.value.fromAccountId === form.value.toAccountId) {
     showFormError('转出和转入账户不能相同。')
     return
   }
-  if (toNumber(form.amount) <= 0) {
+  if (toNumber(form.value.amount) <= 0) {
     showFormError('请输入大于 0 的转账金额。')
     return
   }
@@ -278,14 +286,17 @@ async function submitTransfer(): Promise<void> {
   clearFormError()
   try {
     await transfersApi.create({
-      fromAccountId: Number(form.fromAccountId),
-      toAccountId: Number(form.toAccountId),
-      amount: form.amount,
-      transferDate: form.transactionDate,
-      note: form.note || null
+      fromAccountId: Number(form.value.fromAccountId),
+      toAccountId: Number(form.value.toAccountId),
+      amount: form.value.amount,
+      transferDate: form.value.transactionDate,
+      note: form.value.note || null
     })
-    emit('update:modelValue', false)
-    emit('saved')
+    clear()
+    if (ledger.state.activeLedger?.id === ledgerId) {
+      emit('update:modelValue', false)
+      emit('saved', { queued: false })
+    }
   } catch (error) {
     showError(error)
   } finally {
@@ -295,7 +306,7 @@ async function submitTransfer(): Promise<void> {
 
 
 function showError(error: unknown): void {
-  showFormError(error instanceof ApiError ? error.message : '操作失败,请稍后重试')
+  showFormError(error instanceof Error ? error.message : '操作失败,请稍后重试')
 }
 
 function showFormError(message: string): void {
@@ -321,6 +332,7 @@ function showFormError(message: string): void {
 }
 
 function clearFormError(): void {
+  errorText.value = ''
   clearErrorTimers()
   errorActive.value = false
   formShaking.value = false
@@ -345,3 +357,12 @@ function revertHoldMs(): number {
   return cssMs('--revert-hold', 3000)
 }
 </script>
+
+<style scoped>
+.manual-fields { display: contents; }
+.manual-fields > .t-acc { grid-column: 1 / -1; }
+.manual-more { display: flex; justify-content: space-between; align-items: center; width: 100%; border: 0; background: transparent; color: var(--color-muted); padding: 10px 0; }
+.manual-more svg { width: 16px; height: 16px; }
+.manual-extras { padding-top: 12px; }
+.manual-form .row-actions > .button:first-child { flex: 1; }
+</style>

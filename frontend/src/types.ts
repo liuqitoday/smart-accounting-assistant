@@ -61,6 +61,8 @@ export interface Account {
   createdAt?: string
 }
 
+export type AccountOption = Pick<Account, 'id' | 'name' | 'type' | 'icon' | 'color' | 'active' | 'default'>
+
 export interface Ledger {
   id: number
   name: string
@@ -195,6 +197,8 @@ export interface SaveTransactionRequest {
   relatedUser?: string | null
   aiSuggestedCategoryId?: number | null
   accountId?: number | null
+  tagIds?: number[]
+  clientRequestId?: string
 }
 
 export interface TransactionCapabilities {
@@ -225,6 +229,7 @@ export interface UpdateTransactionRequest {
   note?: string | null
   relatedUser?: string | null
   accountId?: number | null
+  tagIds?: number[]
 }
 
 export interface TransactionFilters {

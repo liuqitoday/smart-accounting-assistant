@@ -1,8 +1,8 @@
 <template>
-  <AppShell>
+  <div class="analysis-view">
     <PageHeader title="AI 分析" subtitle="用自然语言提问，AI 帮你统计数据">
       <template #actions>
-        <button v-if="messages.length" class="button secondary compact" @click="confirmClear">
+        <button v-if="messages.length" class="button secondary compact" :disabled="loading || clearing" @click="confirmClear">
           清空对话
         </button>
       </template>
@@ -11,6 +11,11 @@
     <MessageBanner :message="banner.text" :type="banner.type" @dismissed="clearBanner" />
 
     <div class="analysis-container">
+      <div v-if="historyError" class="history-error" role="alert"><span>聊天记录加载失败，已有对话和草稿已保留。</span><button class="button ghost compact" type="button" @click="loadFirstPage">重试加载</button></div>
+      <div v-if="loadingHistory && !messages.length" class="history-skeleton" role="status" aria-label="正在加载聊天记录">
+        <SkeletonBlock style="height: 48px; width: 65%; margin-left: auto" />
+        <SkeletonBlock style="height: 100px; width: 85%" />
+      </div>
       <!-- 空状态 -->
       <div v-if="showEmptyState" class="empty-state">
         <p class="empty-greeting">有什么想问的？试试这些：</p>
@@ -40,6 +45,7 @@
           v-for="msg in messages"
           :key="msg.id"
           :message="msg"
+          :data-message-id="msg.id"
           @follow-up="askQuestion"
           @open-transactions="openTransactions"
         />
@@ -67,11 +73,13 @@
             placeholder="输入你的问题..."
             rows="1"
             maxlength="500"
-            @keydown.enter.exact.prevent="send"
+            @keydown="handleInputKeydown"
+            @compositionstart="composing = true"
+            @compositionend="composing = false"
           />
           <button
             class="button send"
-            :disabled="!input.trim() || loading"
+            :disabled="!input.trim() || loading || clearing"
             @click="send"
           >
             发送
@@ -86,18 +94,20 @@
       </div>
       <div class="modal-footer">
         <button class="button secondary" @click="clearModalOpen = false">取消</button>
-        <button class="button danger" @click="executeClear">确认清空</button>
+        <button class="button danger" :disabled="clearing || loading" @click="executeClear">{{ clearing ? '清空中...' : '确认清空' }}</button>
       </div>
     </UiModal>
-  </AppShell>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, onDeactivated, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { analysisApi } from '@/api'
 import { ApiError } from '@/api/http'
-import AppShell from '@/components/AppShell.vue'
+import SkeletonBlock from '@/components/SkeletonBlock.vue'
+import { useDataRefresh } from '@/composables/useDataRefresh'
+import { useDraft } from '@/composables/useDraft'
 import PageHeader from '@/components/PageHeader.vue'
 import MessageBanner from '@/components/MessageBanner.vue'
 import UiModal from '@/components/UiModal.vue'
@@ -111,10 +121,17 @@ const PAGE_SIZE = 20
 
 const router = useRouter()
 const messages = ref<AnalysisMessage[]>([])
-const input = ref('')
+const { draft, clear: clearDraft } = useDraft('analysis-question', { question: '' })
+const input = computed({ get: () => draft.value.question, set: value => { draft.value.question = value } })
+const composing = ref(false)
+const clearing = ref(false)
+const historyError = ref(false)
+let historyLoaded = false
+let active = true
+let destroyed = false
 const loading = ref(false)
 const loadingHistory = ref(false)
-const loadingPhase = ref('理解问题中...')
+const loadingPhase = ref('AI 正在分析账本...')
 const { message: banner, showSuccess, showError, clear: clearBanner } = useMessage()
 const clearModalOpen = ref(false)
 const page = ref(0)
@@ -147,21 +164,34 @@ const canRetry = computed(() => {
   return !!last && last.status === 'FAILED' && last.id < 0 && !!lastQuestion.value
 })
 
-onMounted(loadFirstPage)
-onBeforeUnmount(clearPhaseTimers)
+useDataRefresh(async () => {
+  if (!historyLoaded && !loadingHistory.value) await loadFirstPage()
+})
+onActivated(() => { active = true })
+onDeactivated(() => { active = false })
+onBeforeUnmount(() => {
+  active = false
+  destroyed = true
+  clearPhaseTimers()
+})
 
 async function loadFirstPage(): Promise<void> {
+  if (loadingHistory.value) return
   loadingHistory.value = true
+  historyError.value = false
   try {
     const result = await analysisApi.messages(0, PAGE_SIZE)
+    if (destroyed) return
     const history = [...result.content].reverse()
     const historyIds = new Set(history.map(item => item.id))
     const localOrNewer = messages.value.filter(item => item.id < 0 || !historyIds.has(item.id))
     messages.value = [...history, ...localOrNewer]
     page.value = 0
     hasMore.value = !result.last
-    scrollToBottom()
+    historyLoaded = true
+    if (!loading.value) scrollToBottom()
   } catch (error) {
+    historyError.value = true
     showError(error, '聊天记录加载失败')
   } finally {
     loadingHistory.value = false
@@ -172,7 +202,11 @@ async function loadMore(): Promise<void> {
   if (loadingHistory.value || !hasMore.value) return
   loadingHistory.value = true
   try {
+    const firstMessage = document.querySelector<HTMLElement>('[data-message-id]')
+    const firstId = firstMessage?.dataset.messageId
+    const firstTop = firstMessage?.getBoundingClientRect().top
     const result = await analysisApi.messages(page.value + 1, PAGE_SIZE)
+    if (destroyed) return
     // 发新消息后服务端按页码分页会整体后移（offset 漂移），下一页可能重现已展示的消息：
     // 前插前按 id 去重，避免同一条消息渲染两次（key 重复）。本地失败气泡为负 id，不会与服务端 id 冲突。
     const existingIds = new Set(messages.value.map(item => item.id))
@@ -180,11 +214,23 @@ async function loadMore(): Promise<void> {
     messages.value = [...older, ...messages.value]
     page.value += 1
     hasMore.value = !result.last
+    await nextTick()
+    if (active && firstId && firstTop != null) {
+      const anchor = document.querySelector<HTMLElement>(`[data-message-id="${firstId}"]`)
+      if (anchor) window.scrollTo({ top: window.scrollY + anchor.getBoundingClientRect().top - firstTop })
+    }
   } catch (error) {
     showError(error, '聊天记录加载失败')
   } finally {
     loadingHistory.value = false
   }
+}
+
+function handleInputKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'Enter' || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return
+  if (event.isComposing || composing.value || event.keyCode === 229) return
+  event.preventDefault()
+  send()
 }
 
 function send(): void {
@@ -215,12 +261,12 @@ function retryLast(): void {
 }
 
 function askQuestion(question: string): void {
-  if (loading.value) return
+  if (loading.value || clearing.value) return
   lastQuestion.value = question
-  input.value = ''
+  if (input.value.trim() === question) clearDraft()
   clearBanner()
   loading.value = true
-  loadingPhase.value = '理解问题中...'
+  loadingPhase.value = 'AI 正在分析账本...'
 
   messages.value.push({
     id: localId--,
@@ -232,16 +278,18 @@ function askQuestion(question: string): void {
 
   clearPhaseTimers()
   phaseTimers = [
-    window.setTimeout(() => { if (loading.value) loadingPhase.value = '查询数据中...' }, 1200),
-    window.setTimeout(() => { if (loading.value) loadingPhase.value = '组织回答中...' }, 2800)
+    window.setTimeout(() => { if (loading.value) loadingPhase.value = '分析仍在继续，可以先查看其他页面。' }, 8000)
   ]
+  scrollToBottom()
 
   void analysisApi.chat(question)
     .then(response => {
+      if (destroyed) return
       replaceOptimisticUser(question, response.userMessage)
       messages.value.push(response.assistantMessage)
     })
     .catch((error: unknown) => {
+      if (destroyed) return
       messages.value.push({
         id: localId--,
         role: 'ASSISTANT',
@@ -284,8 +332,11 @@ function clearPhaseTimers(): void {
 }
 
 function scrollToBottom(): void {
-  window.requestAnimationFrame(() => {
-    window.scrollTo({ top: document.body.scrollHeight })
+  if (!active || destroyed) return
+  void nextTick(() => {
+    window.requestAnimationFrame(() => {
+      if (active && !destroyed) window.scrollTo({ top: document.body.scrollHeight })
+    })
   })
 }
 
@@ -294,15 +345,20 @@ function confirmClear(): void {
 }
 
 async function executeClear(): Promise<void> {
+  if (loading.value || clearing.value) return
+  clearing.value = true
   try {
     await analysisApi.clearMessages()
     messages.value = []
     page.value = 0
     hasMore.value = false
     clearModalOpen.value = false
+    historyLoaded = true
     showSuccess('对话已清空')
   } catch (error) {
     showError(error, '清空失败')
+  } finally {
+    clearing.value = false
   }
 }
 
@@ -310,6 +366,8 @@ defineExpose({ askQuestion })
 </script>
 
 <style scoped>
+.history-error { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--color-danger-text); margin-bottom: 16px; }
+.history-skeleton { display: grid; gap: 20px; padding: 20px 0; }
 .analysis-container {
   max-width: 860px;
   margin: 0 auto;
@@ -374,7 +432,7 @@ defineExpose({ askQuestion })
 
 .input-bar {
   position: fixed;
-  bottom: 0;
+  bottom: var(--keyboard-inset, 0px);
   left: 248px; /* 与 .app-shell 侧栏列宽同步（styles.css grid-template-columns: 248px …） */
   right: 0;
   padding: 16px 20px calc(16px + env(safe-area-inset-bottom));
@@ -400,7 +458,7 @@ defineExpose({ askQuestion })
        取 60px 让输入栏下缘略垫入 tabbar 之下（输入栏 z-30 < tabbar z-40，被其近不透明底盖住），
        任何字体度量下都不再漏缝；中央记账 FAB 顶缘位于底部 58px + safe-area 处
        （52px 高、锚定在 6px 底内边距上，未越出 tabbar 顶缘），始终低于输入栏下缘，不会压住输入栏。 */
-    bottom: calc(60px + env(safe-area-inset-bottom));
+    bottom: calc(var(--keyboard-inset, 0px) + var(--mobile-tabbar-height, 60px) + env(safe-area-inset-bottom));
     /* 非贴底摆放：safe-area 由下方 tabbar 承担，无需重复垫高 */
     padding-bottom: 16px;
   }
@@ -408,18 +466,23 @@ defineExpose({ askQuestion })
   .analysis-container {
     padding-bottom: 160px;
   }
+
+  html.keyboard-open .input-bar {
+    bottom: var(--keyboard-inset, 0px);
+    padding-bottom: 10px;
+  }
 }
 
 .question-input {
   flex: 1;
   min-height: 42px;
-  max-height: 120px;
   padding: 10px 14px;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
   background: var(--color-surface);
-  font-size: 15px;
-  resize: vertical;
+  font-size: 16px;
+  resize: none;
+  max-height: min(120px, calc(var(--visual-viewport-height, 100dvh) * 0.28));
 }
 
 .load-more,

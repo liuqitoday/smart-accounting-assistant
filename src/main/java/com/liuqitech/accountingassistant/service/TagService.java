@@ -177,10 +177,11 @@ public class TagService {
             return new HashSet<>();
         }
 
-        List<Tag> tags = tagRepository.findAllById(tagIds);
+        List<Long> uniqueIds = tagIds.stream().distinct().toList();
+        List<Tag> tags = tagRepository.findAllById(uniqueIds);
 
         // 验证所有标签都存在
-        if (tags.size() != tagIds.size()) {
+        if (tags.size() != uniqueIds.size()) {
             throw new ResourceNotFoundException("某些标签不存在");
         }
 

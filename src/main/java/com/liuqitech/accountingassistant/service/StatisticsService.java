@@ -4,7 +4,6 @@ import com.liuqitech.accountingassistant.dto.CategoryStatisticsDto;
 import com.liuqitech.accountingassistant.dto.StatisticsSummaryDto;
 import com.liuqitech.accountingassistant.dto.TransactionDto;
 import com.liuqitech.accountingassistant.dto.TrendDataDto;
-import com.liuqitech.accountingassistant.dto.analysis.AnalysisAggregateFact;
 import com.liuqitech.accountingassistant.dto.analysis.AnalysisBreakdownFact;
 import com.liuqitech.accountingassistant.dto.analysis.AnalysisDateRange;
 import com.liuqitech.accountingassistant.dto.analysis.AnalysisFilters;
@@ -67,29 +66,21 @@ public class StatisticsService {
         LocalDate startDate = dateRange[0];
         LocalDate endDate = dateRange[1];
 
-        AnalysisAggregateFact income = analysisReadService.aggregate(
-            ledgerId, aggregateQuery(TransactionType.INCOME, startDate, endDate));
-        AnalysisAggregateFact expense = analysisReadService.aggregate(
-            ledgerId, aggregateQuery(TransactionType.EXPENSE, startDate, endDate));
-        BigDecimal totalIncome = income.amount();
-        BigDecimal totalExpense = expense.amount();
-        Long transactionCount = income.count() + expense.count();
-
         long durationDays = ChronoUnit.DAYS.between(startDate, endDate) + 1;
         LocalDate prevEnd = startDate.minusDays(1);
         LocalDate prevStart = prevEnd.minusDays(durationDays - 1);
-        AnalysisAggregateFact prevIncomeFact = analysisReadService.aggregate(
-            ledgerId, aggregateQuery(TransactionType.INCOME, prevStart, prevEnd));
-        AnalysisAggregateFact prevExpenseFact = analysisReadService.aggregate(
-            ledgerId, aggregateQuery(TransactionType.EXPENSE, prevStart, prevEnd));
-        BigDecimal prevIncome = prevIncomeFact.amount();
-        BigDecimal prevExpense = prevExpenseFact.amount();
+        AnalysisReadService.SummaryAmounts amounts = analysisReadService.summary(
+            ledgerId, startDate, endDate, prevStart);
+        BigDecimal totalIncome = amounts.income();
+        BigDecimal totalExpense = amounts.expense();
+        BigDecimal prevIncome = amounts.previousIncome();
+        BigDecimal prevExpense = amounts.previousExpense();
 
         StatisticsSummaryDto summary = new StatisticsSummaryDto();
         summary.setTotalIncome(totalIncome);
         summary.setTotalExpense(totalExpense);
         summary.setBalance(summary.getTotalIncome().subtract(summary.getTotalExpense()));
-        summary.setTransactionCount(transactionCount);
+        summary.setTransactionCount(amounts.count());
         summary.setPeriodStart(startDate.format(DATE_FORMATTER));
         summary.setPeriodEnd(endDate.format(DATE_FORMATTER));
         summary.setPrevTotalIncome(prevIncome);
@@ -218,14 +209,6 @@ public class StatisticsService {
             trendData.add(new TrendDataDto(point.period(), point.income(), point.expense()));
         }
         return trendData;
-    }
-
-    private NormalizedAnalysisQuery aggregateQuery(TransactionType type, LocalDate start, LocalDate end) {
-        return new NormalizedAnalysisQuery(
-            "stats-agg", AnalysisQueryKind.AGGREGATE, AnalysisMetric.SUM, type,
-            AnalysisPeriodSpec.explicit(start, end), new AnalysisDateRange(start, end),
-            AnalysisFilters.empty(), null, null, AnalysisSortField.AMOUNT, AnalysisSortDirection.DESC,
-            50, "stats-agg");
     }
 
     private NormalizedAnalysisQuery breakdownQuery(TransactionType type, LocalDate start, LocalDate end) {

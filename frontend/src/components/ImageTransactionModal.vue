@@ -1,5 +1,6 @@
 <template>
-  <UiModal
+  <component
+    :is="embedded ? 'div' : UiModal"
     :model-value="modelValue"
     title="截图记账"
     subtitle="上传消费或收入截图，核对识别结果后逐笔入账。"
@@ -7,6 +8,7 @@
     @update:model-value="requestClose"
   >
     <div class="image-accounting" @paste="onPaste">
+      <p v-if="!online" class="message info">当前离线，已有识别结果仍可保存；识别新截图需要联网。</p>
       <p v-if="errorText" class="message error" role="alert">{{ errorText }}</p>
       <p v-if="!canEdit" class="message info">当前账本为只读角色，不能识别或保存交易。</p>
       <div class="image-workspace">
@@ -39,11 +41,12 @@
             <button
               class="button"
               type="button"
-              :disabled="busy || !selectedFile || !canEdit || recognized"
+              :disabled="busy || !selectedFile || !canEdit || recognized || !online"
               @click="recognize"
             >
               <Sparkles aria-hidden="true" />{{ parsing ? '正在识别截图…' : recognized ? '已识别，请核对' : '识别这张截图' }}
             </button>
+            <button v-if="parsing" class="button secondary" type="button" @click="cancelParsing">取消识别</button>
             <button v-if="selectedFile" class="button ghost" type="button" :disabled="busy" @click="clearImage">清空</button>
           </div>
         </section>
@@ -51,7 +54,7 @@
         <section ref="resultsRef" class="image-results" aria-label="识别结果" :aria-busy="parsing">
           <div class="image-result-heading">
             <h3>核对这几笔</h3>
-            <span v-if="rows.length" class="muted-text" role="status">待核对 {{ pendingCount }} 笔 · 已保存 {{ savedCount }} 笔</span>
+            <span v-if="rows.length" class="muted-text" role="status">待核对 {{ pendingCount }} 笔 · 已保存 {{ savedCount }} 笔<span v-if="queuedCount"> · 待同步 {{ queuedCount }} 笔</span></span>
           </div>
           <div v-if="warnings.length" class="image-warnings" role="status">
             <TriangleAlert aria-hidden="true" />
@@ -74,7 +77,7 @@
               >
                 <span class="image-row-description">{{ row.draft.description || '待补充描述' }}</span>
                 <span class="image-row-amount num">{{ row.draft.type === 'INCOME' ? '+' : '−' }}¥{{ formatPlainMoney(row.draft.amount) }}</span>
-                <span v-if="row.status !== 'pending'" class="image-row-status">{{ row.status === 'saved' ? '已保存' : '已跳过' }}</span>
+                <span v-if="row.status !== 'pending'" class="image-row-status">{{ row.status === 'saved' ? '已保存' : row.status === 'queued' ? '待同步' : '已跳过' }}</span>
               </button>
             </div>
             <p v-if="categoryError" class="message error">
@@ -85,7 +88,7 @@
               <fieldset class="image-fields" :disabled="saving || !canEdit">
                 <div class="form-field">
                   <label for="image-amount">金额</label>
-                  <input id="image-amount" v-model="activeRow.draft.amount" class="input num" type="number" min="0.01" step="0.01" required />
+                  <input id="image-amount" inputmode="decimal" v-model="activeRow.draft.amount" class="input num" type="number" min="0.01" step="0.01" required />
                 </div>
                 <div class="form-field">
                   <label for="image-type">类型</label>
@@ -137,21 +140,21 @@
               </fieldset>
               <div class="form-field full image-save-actions">
                 <button class="button" type="submit" :disabled="saving || !canEdit || categoryError">
-                  {{ saving ? '保存中…' : '确认并记下这一笔' }}
+                  {{ saving ? '保存中…' : online ? '确认并记下这一笔' : '保存，联网后同步' }}
                 </button>
                 <button class="button ghost" type="button" :disabled="saving || !canEdit" @click="skipActive">跳过这一笔</button>
               </div>
             </form>
             <div v-else class="image-complete" role="status">
               <CheckCircle2 aria-hidden="true" />
-              <p>这张截图已核对完成，已保存 {{ savedCount }} 笔。</p>
+              <p>这张截图已核对完成，已保存 {{ savedCount }} 笔<span v-if="queuedCount">，待同步 {{ queuedCount }} 笔</span>。</p>
               <button class="button secondary" type="button" @click="requestClose(false)">完成</button>
             </div>
           </template>
         </section>
       </div>
     </div>
-  </UiModal>
+  </component>
 </template>
 
 <script setup lang="ts">
@@ -161,45 +164,56 @@ import { categoriesApi, transactionsApi } from '@/api'
 import { ApiError } from '@/api/http'
 import CategorySelector from '@/components/CategorySelector.vue'
 import UiModal from '@/components/UiModal.vue'
+import { useDraft } from '@/composables/useDraft'
+import { useConnectivity } from '@/composables/useConnectivity'
+import { saveOrQueueTransaction } from '@/stores/outbox'
+import { identifySubmission, type SubmissionIdentity } from '@/utils/submission'
 import { useLedgerStore } from '@/stores/ledger'
-import type { Account, Category, ImageTransactionDraft, SaveTransactionRequest, TransactionCapabilities } from '@/types'
+import type { AccountOption, Category, ImageTransactionDraft, SaveTransactionRequest, TransactionCapabilities } from '@/types'
 import { flattenCategories } from '@/utils/category'
 import { formatPlainMoney } from '@/utils/format'
 
 const props = defineProps<{
   modelValue: boolean
   capabilities: TransactionCapabilities
-  accounts: Account[]
+  accounts: AccountOption[]
+  embedded?: boolean
 }>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
-  saved: []
+  saved: [result?: { queued: boolean }]
+  busy: [value: boolean]
 }>()
 
 interface DraftRow {
   key: number
   draft: ImageTransactionDraft
-  status: 'pending' | 'saved' | 'skipped'
+  status: 'pending' | 'saved' | 'skipped' | 'queued'
+  submission?: SubmissionIdentity
 }
 
 const ledger = useLedgerStore()
+const scopedLedgerId = ledger.state.activeLedger?.id
+const sameLedger = computed(() => ledger.state.activeLedger?.id === scopedLedgerId)
+const { online } = useConnectivity()
+const { draft: savedDraft, clear: clearDraft } = useDraft('image-transactions', { rows: [] as DraftRow[], warnings: [] as string[] })
 const fileInput = ref<HTMLInputElement | null>(null)
 const resultsRef = ref<HTMLElement | null>(null)
 const selectedFile = ref<File | null>(null)
 const previewUrl = ref('')
 const parsing = ref(false)
 const saving = ref(false)
-const recognized = ref(false)
-const rows = ref<DraftRow[]>([])
-const activeKey = ref<number | null>(null)
-const warnings = ref<string[]>([])
+const rows = computed({ get: () => sameLedger.value ? savedDraft.value.rows : [], set: value => { savedDraft.value.rows = value } })
+const warnings = computed({ get: () => savedDraft.value.warnings, set: value => { savedDraft.value.warnings = value } })
+const recognized = computed(() => rows.value.length > 0)
+const activeKey = ref<number | null>(rows.value.find(row => row.status === 'pending')?.key ?? null)
 const categories = ref<Category[]>([])
 const categoryError = ref(false)
 const errorText = ref('')
 let generation = 0
 let parseController: AbortController | null = null
 
-const canEdit = computed(() => ledger.canEdit.value && props.capabilities.imageParsingEnabled)
+const canEdit = computed(() => sameLedger.value && ledger.canEdit.value && props.capabilities.imageParsingEnabled)
 const busy = computed(() => parsing.value || saving.value)
 const activeAccounts = computed(() => props.accounts.filter(account => account.active))
 const sizeLimitMb = computed(() => Math.round(props.capabilities.maxImageSizeBytes / 1024 / 1024))
@@ -207,14 +221,16 @@ const activeRow = computed(() => rows.value.find(row => row.key === activeKey.va
 const currentCategories = computed(() => flattenCategories(categories.value).filter(category => category.type === activeRow.value?.draft.type))
 const pendingCount = computed(() => rows.value.filter(row => row.status === 'pending').length)
 const savedCount = computed(() => rows.value.filter(row => row.status === 'saved').length)
+const queuedCount = computed(() => rows.value.filter(row => row.status === 'queued').length)
+watch(saving, value => emit('busy', value))
 
 watch(() => props.modelValue, open => {
   if (open) void loadCategories()
-  else cancelParsing()
+  else if (!props.embedded) cancelParsing()
 }, { immediate: true })
 
 watch(() => ledger.state.activeLedger?.id, () => {
-  resetImage()
+  releaseImage()
   categories.value = []
   emit('update:modelValue', false)
 })
@@ -223,7 +239,7 @@ watch(canEdit, allowed => {
   if (!allowed) cancelParsing()
 })
 
-onBeforeUnmount(() => resetImage())
+onBeforeUnmount(releaseImage)
 
 async function loadCategories(): Promise<void> {
   const currentGeneration = generation
@@ -282,17 +298,21 @@ function clearImage(): void {
   if (!busy.value) resetImage()
 }
 
-function resetImage(): void {
+function releaseImage(): void {
   generation++
   cancelParsing()
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
   previewUrl.value = ''
   selectedFile.value = null
+}
+
+function resetImage(): void {
+  releaseImage()
+  clearDraft()
   rows.value = []
   activeKey.value = null
   warnings.value = []
   errorText.value = ''
-  recognized.value = false
   saving.value = false
 }
 
@@ -304,7 +324,7 @@ function cancelParsing(): void {
 
 async function recognize(): Promise<void> {
   const ledgerId = ledger.state.activeLedger?.id
-  if (!selectedFile.value || !ledgerId || !canEdit.value || busy.value || recognized.value) return
+  if (!online.value || !selectedFile.value || !ledgerId || !canEdit.value || busy.value || recognized.value) return
   const currentGeneration = generation
   const controller = new AbortController()
   parseController = controller
@@ -312,14 +332,14 @@ async function recognize(): Promise<void> {
   errorText.value = ''
   try {
     const result = await transactionsApi.parseImage(selectedFile.value, ledgerId, controller.signal)
-    if (currentGeneration !== generation || parseController !== controller || !props.modelValue || !canEdit.value) return
+    if (currentGeneration !== generation || parseController !== controller || (!props.embedded && !props.modelValue) || !canEdit.value) return
     rows.value = result.transactions.map((draft, key) => ({
       key,
       draft: { ...draft, accountId: draft.accountId ?? null },
-      status: 'pending'
+      status: 'pending',
+      submission: { fingerprint: '', key: '' }
     }))
     warnings.value = result.warnings || []
-    recognized.value = rows.value.length > 0
     activeKey.value = rows.value[0]?.key ?? null
     if (!rows.value.length) errorText.value = '没有识别到可入账的收支，请换一张清晰的消费或收入截图。'
     if (!categories.value.length) void loadCategories()
@@ -386,20 +406,22 @@ async function saveActive(): Promise<void> {
     ...draft,
     categoryId: draft.categoryId!,
     transactionDate: draft.transactionDate,
-    originalText: draft.originalText || draft.description
+    originalText: draft.originalText || draft.description,
+    tagIds: draft.tags?.map(tag => tag.id) || []
   }
   const currentGeneration = generation
   saving.value = true
   errorText.value = ''
   try {
-    await transactionsApi.save(payload, ledgerId)
+    row.submission ||= { fingerprint: '', key: '' }
+    const result = await saveOrQueueTransaction(identifySubmission(payload, row.submission), ledgerId)
     if (currentGeneration !== generation || ledger.state.activeLedger?.id !== ledgerId) return
-    row.status = 'saved'
+    row.status = result.queued ? 'queued' : 'saved'
     advance()
-    emit('saved')
+    emit('saved', result)
   } catch (error) {
     if (currentGeneration === generation) {
-      errorText.value = error instanceof ApiError ? error.message : '保存失败，请检查交易记录后重试，避免重复入账。'
+      errorText.value = error instanceof Error ? error.message : '保存失败，请重试。'
     }
   } finally {
     if (currentGeneration === generation) saving.value = false

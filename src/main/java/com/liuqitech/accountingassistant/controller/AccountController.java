@@ -1,6 +1,7 @@
 package com.liuqitech.accountingassistant.controller;
 
 import com.liuqitech.accountingassistant.dto.AccountDto;
+import com.liuqitech.accountingassistant.dto.AccountOptionDto;
 import com.liuqitech.accountingassistant.dto.ApiResponse;
 import com.liuqitech.accountingassistant.dto.CreateAccountRequest;
 import com.liuqitech.accountingassistant.dto.SetDefaultAccountRequest;
@@ -39,6 +40,12 @@ public class AccountController {
         String username = LedgerContext.username(request);
         logger.debug("获取账本 {} 的账户列表", ledgerId);
         return ApiResponse.success(accountService.getLedgerAccounts(ledgerId, username));
+    }
+
+    @GetMapping("/options")
+    public ApiResponse<List<AccountOptionDto>> getOptions(HttpServletRequest request) {
+        return ApiResponse.success(accountService.getAccountOptions(
+                LedgerContext.ledgerId(request), LedgerContext.username(request)));
     }
 
     /**

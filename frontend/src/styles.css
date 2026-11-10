@@ -1203,6 +1203,38 @@ input[type="time"].input {
   height: 18px;
 }
 
+/* Compact actions shared by connection notices and app updates. */
+.banner-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-text);
+  font: inherit;
+  font-weight: 700;
+  line-height: 1.25;
+  cursor: pointer;
+}
+
+.banner-action-btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  background: var(--color-surface);
+}
+
+.banner-action-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.banner-action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 /* —— 消息与提示 —— */
 
 .message {
@@ -2152,4 +2184,103 @@ input[type="time"].input {
   .row-actions .button {
     width: 100%;
   }
+}
+
+/* Shared loading placeholders (transitions-dev). */
+:root {
+  --pulse-dur: 1000ms;
+  --pulse-count: 1;
+  --pulse-min: 0.5;
+  --reveal-dur: 400ms;
+  --reveal-blur: 2px;
+  --reveal-ease: ease-in-out;
+}
+
+/* The wrap stacks two layers on the same coordinates. The
+   skeleton owns the cold pulse + the fade-out side of the
+   reveal; the content owns the fade-in side. They share the
+   same duration / ease so the swap reads as one motion. */
+.t-skel { position: relative; }
+.t-skel-skeleton,
+.t-skel-content {
+  position: absolute;
+  inset: 0;
+}
+
+.t-skel-skeleton {
+  z-index: 1;
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    opacity var(--reveal-dur) var(--reveal-ease),
+    filter  var(--reveal-dur) var(--reveal-ease);
+}
+.t-skel-content {
+  z-index: 2;
+  opacity: 0;
+  filter: blur(var(--reveal-blur));
+  transition:
+    opacity var(--reveal-dur) var(--reveal-ease),
+    filter  var(--reveal-dur) var(--reveal-ease);
+}
+.t-skel.is-revealed .t-skel-skeleton {
+  opacity: 0;
+  filter: blur(var(--reveal-blur));
+}
+.t-skel.is-revealed .t-skel-content {
+  opacity: 1;
+  filter: blur(0);
+}
+/* Snap-back when replaying: kill transitions so the reverse
+   (revealed → skeleton) is instant. Drop `.is-resetting`
+   after a forced reflow and the next reveal animates again. */
+.t-skel.is-resetting .t-skel-skeleton,
+.t-skel.is-resetting .t-skel-content {
+  transition: none !important;
+}
+
+/* Pulse: place the animation on the bar/avatar children, not
+   on the skeleton itself, so the skeleton's opacity / filter
+   stay free for the cross-fade transition above. */
+.t-skel-skeleton.is-pulsing > * {
+  animation: t-skel-pulse var(--pulse-dur) ease-in-out var(--pulse-count);
+}
+@keyframes t-skel-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: var(--pulse-min); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-skel-skeleton, .t-skel-content {
+    transition: none !important;
+  }
+  .t-skel-skeleton.is-pulsing > * { animation: none !important; }
+}
+
+
+/* The viewport follows the soft keyboard, including installed mobile PWAs. */
+:root {
+  --visual-viewport-height: 100dvh;
+  --visual-viewport-top: 0px;
+  --keyboard-inset: 0px;
+}
+html { scrollbar-gutter: stable; }
+button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
+button, .nav-link, .tab-item { touch-action: manipulation; }
+.button:active:not(:disabled), .icon-button:active:not(:disabled) { transform: scale(.98); }
+.modal-panel { overscroll-behavior: contain; }
+.loading-skeleton { display: grid; gap: 14px; padding: 16px 0; }
+@media (max-width: 820px) {
+  input, select, textarea, .input, .select, .textarea { font-size: 16px; }
+  .modal-backdrop {
+    top: var(--visual-viewport-top);
+    bottom: auto;
+    height: var(--visual-viewport-height);
+  }
+  .modal-panel, .modal-panel.sm, .modal-panel.lg, .modal-panel.xl {
+    max-height: calc(var(--visual-viewport-height) - 16px);
+  }
+  .keyboard-open .tabbar { visibility: hidden; pointer-events: none; }
+  .tab-item { min-height: 48px; }
+  .icon-button { min-width: 40px; min-height: 40px; }
 }

@@ -1,6 +1,7 @@
 package com.liuqitech.accountingassistant.service;
 
 import com.liuqitech.accountingassistant.dto.AccountDto;
+import com.liuqitech.accountingassistant.dto.AccountOptionDto;
 import com.liuqitech.accountingassistant.dto.CreateAccountRequest;
 import com.liuqitech.accountingassistant.dto.UpdateAccountRequest;
 import com.liuqitech.accountingassistant.entity.Account;
@@ -101,6 +102,17 @@ public class AccountService {
                     account.getId().equals(defaultAccountId)));
         }
         return result;
+    }
+
+    @Transactional(readOnly = true)
+    public List<AccountOptionDto> getAccountOptions(Long ledgerId, String username) {
+        Long defaultAccountId = ledgerMemberRepository.findByLedgerIdAndUsername(ledgerId, username)
+                .map(LedgerMember::getDefaultAccountId).orElse(null);
+        return accountRepository.findByLedgerIdOrderByActiveDescIdAsc(ledgerId).stream()
+                .map(account -> new AccountOptionDto(account.getId(), account.getName(), account.getType(),
+                        account.getIcon(), account.getColor(), account.isActive(),
+                        account.isActive() && account.getId().equals(defaultAccountId)))
+                .toList();
     }
 
     /**

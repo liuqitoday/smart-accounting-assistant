@@ -1,6 +1,6 @@
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="modal-backdrop" @click.self="requestClose">
+    <div v-if="visible || keepMounted" v-show="visible" class="modal-backdrop" @click.self="requestClose">
       <div
         ref="panelRef"
         class="modal-panel t-modal"
@@ -27,10 +27,11 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onDeactivated, ref, useId, watch } from 'vue'
 import { X } from 'lucide-vue-next'
 import { cssMs } from '@/utils/css'
 import { lockBodyScroll, unlockBodyScroll } from '@/utils/modalScrollLock'
+import { registerModal, unregisterModal } from '@/utils/modalHistory'
 
 const props = withDefaults(
   defineProps<{
@@ -38,6 +39,7 @@ const props = withDefaults(
     title: string
     subtitle?: string
     size?: 'sm' | 'md' | 'lg' | 'xl'
+    keepMounted?: boolean
   }>(),
   {
     subtitle: '',
@@ -75,6 +77,7 @@ watch(
 )
 
 onBeforeUnmount(() => {
+  unregisterModal(instanceId)
   const shouldRestoreFocus = isTopmostModal()
   clearMotionTimers()
   stopKeydownListener()
@@ -86,11 +89,17 @@ onBeforeUnmount(() => {
   }
 })
 
+onDeactivated(() => {
+  if (props.modelValue) requestClose()
+  releaseScrollLock()
+})
+
 function requestClose(): void {
   emit('update:modelValue', false)
 }
 
 function openModal(): void {
+  registerModal(instanceId, requestClose)
   clearMotionTimers()
   if (!visible.value || (!isOpen.value && !isClosing.value)) {
     previousActiveElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -113,6 +122,7 @@ function openModal(): void {
 }
 
 function closeModal(): void {
+  unregisterModal(instanceId)
   clearMotionTimers()
   if (!visible.value) return
 
@@ -169,6 +179,7 @@ function isTopmostModal(): boolean {
   let topmostZIndex = Number.NEGATIVE_INFINITY
   for (const panel of panels) {
     const backdrop = panel.closest<HTMLElement>('.modal-backdrop')
+    if (backdrop && window.getComputedStyle(backdrop).display === 'none') continue
     const zIndex = Number.parseFloat(backdrop ? window.getComputedStyle(backdrop).zIndex : '0') || 0
     if (zIndex >= topmostZIndex) {
       topmost = panel

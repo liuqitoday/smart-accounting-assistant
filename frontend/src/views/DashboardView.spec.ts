@@ -1,163 +1,70 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import DashboardView from './DashboardView.vue'
 import { useLedgerStore } from '@/stores/ledger'
-import type { Account, Ledger, TransactionParseResponse } from '@/types'
+import { useRecording } from '@/stores/recording'
+import type { Ledger } from '@/types'
 
-const parseOnly = vi.fn()
-const listAccounts = vi.fn()
-const capabilities = vi.fn()
-
+const { summary, recent, capabilities } = vi.hoisted(() => ({ summary: vi.fn(), recent: vi.fn(), capabilities: vi.fn() }))
 vi.mock('@/api', () => ({
-  accountsApi: { list: (...args: unknown[]) => listAccounts(...args) },
-  categoriesApi: { list: vi.fn().mockResolvedValue([]) },
-  tagsApi: { list: vi.fn().mockResolvedValue([]) },
-  statisticsApi: { summary: vi.fn().mockResolvedValue({ totalIncome: 0, totalExpense: 0, balance: 0, transactionCount: 0 }) },
-  transactionsApi: {
-    parseOnly: (...args: unknown[]) => parseOnly(...args),
-    capabilities: (...args: unknown[]) => capabilities(...args),
-    save: vi.fn()
-  }
+  statisticsApi: { summary, recent }, transactionsApi: { capabilities }
 }))
-
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }) }))
+const mounted: ReturnType<typeof mount>[] = []
+const stubs = { PageHeader: true, RouterLink: { template: '<a><slot /></a>' } }
+function render() { const wrapper = mount(DashboardView, { global: { stubs } }); mounted.push(wrapper); return wrapper }
+beforeEach(() => {
+  vi.clearAllMocks()
+  summary.mockResolvedValue({ totalIncome: 0, totalExpense: 0, balance: 0, transactionCount: 0 })
+  recent.mockResolvedValue([])
+  capabilities.mockResolvedValue({ imageParsingEnabled: false })
+  useLedgerStore().state.activeLedger = { id: 1, name: '账本', myRole: 'OWNER' } as Ledger
+  useRecording().close()
+})
+afterEach(() => mounted.splice(0).forEach(wrapper => wrapper.unmount()))
 
-if (!window.matchMedia) {
-  window.matchMedia = vi.fn().mockReturnValue({
-    matches: false,
-    media: '',
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    addListener: vi.fn(),
-    removeListener: vi.fn(),
-    dispatchEvent: vi.fn(),
-    onchange: null
-  }) as unknown as typeof window.matchMedia
-}
-
-const stubs = {
-  AppShell: { template: '<div><slot /></div>' },
-  PageHeader: { template: '<div />' },
-  MessageBanner: { template: '<div />' },
-  ManualTransactionModal: { template: '<div />' },
-  ImageTransactionModal: { template: '<div />' },
-  CategorySelector: { template: '<div />' },
-  TagSelector: { template: '<div />' }
-}
-
-describe('DashboardView AI 解析后的默认账户', () => {
-  beforeEach(() => {
-    parseOnly.mockReset()
-    listAccounts.mockReset()
-    capabilities.mockResolvedValue({ imageParsingEnabled: false })
-    useLedgerStore().state.activeLedger = { id: 1, name: '账本', myRole: 'OWNER' } as Ledger
-  })
-
-  it('解析结果未带账户时自动选中默认账户', async () => {
-    listAccounts.mockResolvedValue([account(1), account(2, { default: true })])
-    parseOnly.mockResolvedValue(parsed(null))
-
-    const wrapper = await parse()
-    expect(accountSelect(wrapper).value).toBe('2')
-  })
-
-  it('没有默认账户时保持「未指定账户」', async () => {
-    listAccounts.mockResolvedValue([account(1), account(2)])
-    parseOnly.mockResolvedValue(parsed(null))
-
-    const wrapper = await parse()
-    expect(accountSelect(wrapper).value).toBe('')
-  })
-
-  it('默认账户已停用时不自动选中', async () => {
-    listAccounts.mockResolvedValue([account(1), account(2, { default: true, active: false })])
-    parseOnly.mockResolvedValue(parsed(null))
-
-    const wrapper = await parse()
-    expect(accountSelect(wrapper).value).toBe('')
-  })
-
-  it('AI 已经给出账户时不覆盖它', async () => {
-    listAccounts.mockResolvedValue([account(1), account(2, { default: true })])
-    parseOnly.mockResolvedValue(parsed(1))
-
-    const wrapper = await parse()
-    expect(accountSelect(wrapper).value).toBe('1')
-  })
-
-  it('仅服务端明确开启多模态时展示截图记账入口', async () => {
-    listAccounts.mockResolvedValue([])
-    capabilities.mockResolvedValue({ imageParsingEnabled: false })
-    const wrapper = mount(DashboardView, { global: { stubs } })
-    await flushPromises()
-    expect(wrapper.text()).not.toContain('上传截图记账')
-    wrapper.unmount()
-
+describe('首页快速记账与真实加载状态', () => {
+  it('点击入口立即打开对应记账方式', async () => {
     capabilities.mockResolvedValue({ imageParsingEnabled: true })
-    const enabled = mount(DashboardView, { global: { stubs } })
+    const wrapper = render()
     await flushPromises()
-    expect(enabled.text()).toContain('上传截图记账')
-    enabled.unmount()
+    for (const [label, mode] of [['说一句', 'text'], ['手动记账', 'manual'], ['截图记账', 'image']]) {
+      await wrapper.findAll('button').find(button => button.text().includes(label))!.trigger('click')
+      expect(useRecording().state).toMatchObject({ open: true, mode })
+    }
   })
-
-  it('能力接口失败时隐藏截图入口', async () => {
-    listAccounts.mockResolvedValue([])
+  it('首次加载使用骨架，失败不显示零收支', async () => {
+    let reject!: (error: Error) => void
+    summary.mockImplementationOnce(() => new Promise((_, fail) => { reject = fail }))
+    const wrapper = render()
+    expect(wrapper.find('[aria-label="正在加载本月汇总"]').exists()).toBe(true)
+    expect(wrapper.find('.overview-amount').exists()).toBe(false)
+    reject(new Error('offline'))
+    await flushPromises()
+    expect(wrapper.text()).toContain('本月汇总暂时无法加载')
+    expect(wrapper.find('.overview-amount').exists()).toBe(false)
+  })
+  it('刷新失败保留已有汇总，服务端真实0正常显示', async () => {
+    const wrapper = render()
+    await flushPromises()
+    expect(wrapper.find('.overview-amount').text()).toContain('0.00')
+    summary.mockRejectedValueOnce(new Error('offline'))
+    window.dispatchEvent(new Event('app:data-changed'))
+    await flushPromises()
+    expect(wrapper.text()).toContain('正在显示上次的数据')
+    expect(wrapper.find('.overview-amount').text()).toContain('0.00')
+  })
+  it('多模态能力关闭或加载失败时隐藏截图入口', async () => {
     capabilities.mockRejectedValueOnce(new Error('unavailable'))
-    const wrapper = mount(DashboardView, { global: { stubs } })
+    const wrapper = render()
     await flushPromises()
-    expect(wrapper.text()).not.toContain('上传截图记账')
-    wrapper.unmount()
+    expect(wrapper.text()).not.toContain('截图记账')
   })
-
-  it('只读成员不能使用已开启的截图入口', async () => {
-    listAccounts.mockResolvedValue([])
+  it('只读账本所有记账入口禁用', async () => {
+    useLedgerStore().state.activeLedger!.myRole = 'VIEWER'
     capabilities.mockResolvedValue({ imageParsingEnabled: true })
-    useLedgerStore().state.activeLedger = { id: 1, name: '只读账本', myRole: 'VIEWER' } as Ledger
-    const wrapper = mount(DashboardView, { global: { stubs } })
+    const wrapper = render()
     await flushPromises()
-    const entry = wrapper.findAll('button').find(button => button.text().includes('上传截图记账'))
-    expect(entry?.attributes('disabled')).toBeDefined()
-    wrapper.unmount()
+    expect(wrapper.findAll('.quick-record button').every(button => button.attributes('disabled') !== undefined)).toBe(true)
   })
 })
-
-async function parse() {
-  const wrapper = mount(DashboardView, { global: { stubs } })
-  await flushPromises()
-  await wrapper.find('#transactionText').setValue('星巴克咖啡 35 元')
-  const button = wrapper.findAll('button').find(candidate => candidate.text().includes('解析这笔账'))
-  if (!button) throw new Error('解析按钮未渲染')
-  await button.trigger('click')
-  await flushPromises()
-  return wrapper
-}
-
-function accountSelect(wrapper: Awaited<ReturnType<typeof parse>>): HTMLSelectElement {
-  const element = wrapper.find('#parsed-account').element
-  return element as HTMLSelectElement
-}
-
-function parsed(accountId: number | null): TransactionParseResponse {
-  return {
-    amount: 35,
-    type: 'EXPENSE',
-    description: '星巴克咖啡',
-    originalText: '星巴克咖啡 35 元',
-    categoryId: 10,
-    transactionDate: '2026-09-18',
-    accountId
-  }
-}
-
-function account(id: number, overrides: Partial<Account> = {}): Account {
-  return {
-    id,
-    name: `账户${id}`,
-    type: 'CASH',
-    initialBalance: 0,
-    currentBalance: 0,
-    active: true,
-    transactionCount: 0,
-    ...overrides
-  }
-}

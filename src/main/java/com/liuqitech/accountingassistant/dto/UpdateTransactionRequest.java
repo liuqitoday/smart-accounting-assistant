@@ -4,9 +4,11 @@ import com.liuqitech.accountingassistant.enums.TransactionType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 
 /**
  * Request for editing a transaction.
@@ -33,6 +35,9 @@ public class UpdateTransactionRequest {
     private String note;
     private String relatedUser;
     private Long accountId;
+    /** Null/omitted preserves tags; an empty list explicitly clears them. */
+    @Size(max = 100, message = "标签数量不能超过 100")
+    private List<@NotNull @Positive Long> tagIds;
 
     public UpdateTransactionRequest() {}
 
@@ -107,4 +112,8 @@ public class UpdateTransactionRequest {
     public void setAccountId(Long accountId) {
         this.accountId = accountId;
     }
+
+    public List<Long> getTagIds() { return tagIds; }
+
+    public void setTagIds(List<Long> tagIds) { this.tagIds = tagIds; }
 }

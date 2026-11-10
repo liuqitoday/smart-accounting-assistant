@@ -36,7 +36,9 @@
       :id="dropdownId"
       class="cs-dropdown t-dropdown"
       :class="{ 'is-open': isOpen, 'is-closing': isClosing }"
-      data-origin="top-left"
+      :data-origin="dropdownPlacement === 'above' ? 'bottom-left' : 'top-left'"
+      :data-placement="dropdownPlacement"
+      :style="dropdownStyle"
       :aria-hidden="!isOpen"
     >
       <div class="cs-search">
@@ -135,6 +137,8 @@ const selectorRef = ref<HTMLElement>()
 const triggerRef = ref<HTMLButtonElement>()
 const searchInput = ref<HTMLInputElement>()
 const optionsRef = ref<HTMLElement>()
+const dropdownPlacement = ref<'above' | 'below'>('below')
+const dropdownStyle = ref({ maxHeight: '0px', width: '100%', left: '0px', top: '0px', bottom: 'auto' })
 const isOpen = ref(false)
 const dropdownMounted = ref(false)
 const isClosing = ref(false)
@@ -147,6 +151,9 @@ const dropdownId = `category-dropdown-${instanceId}`
 const listboxId = `category-listbox-${instanceId}`
 let closeTimer: number | undefined
 let openFrame: number | undefined
+let positionFrame: number | undefined
+let positionObserver: ResizeObserver | undefined
+let trackedViewport: VisualViewport | null = null
 
 const allowEmpty = computed(() => props.allowEmpty ?? true)
 const emptyLabel = computed(() => props.emptyLabel ?? '全部分类')
@@ -241,7 +248,12 @@ function openDropdown(initialHighlight = -1, focusSearch = true): void {
   highlightIndex.value = initialHighlight
 
   void nextTick(() => {
+    if (!selectorRef.value || isClosing.value) return
+    updateDropdownPosition()
+    startPositionTracking()
     openFrame = window.requestAnimationFrame(() => {
+      openFrame = undefined
+      if (!selectorRef.value || isClosing.value) return
       isOpen.value = true
       if (focusSearch) {
         searchInput.value?.focus({ preventScroll: true })
@@ -255,6 +267,7 @@ function openDropdown(initialHighlight = -1, focusSearch = true): void {
 
 function closeDropdown(restoreTrigger = false): void {
   clearMotionTimers()
+  stopPositionTracking()
   if (!dropdownMounted.value) {
     if (restoreTrigger) triggerRef.value?.focus({ preventScroll: true })
     return
@@ -296,12 +309,103 @@ function handleClickOutside(event: MouseEvent) {
   }
 }
 
+/** Keep the list inside both the visible screen and its scrollable modal. */
+function updateDropdownPosition(): void {
+  const selector = selectorRef.value
+  if (!selector) return
+  const viewport = window.visualViewport
+  let top = viewport?.offsetTop ?? 0
+  let left = viewport?.offsetLeft ?? 0
+  let bottom = top + (viewport?.height ?? window.innerHeight)
+  let right = left + (viewport?.width ?? window.innerWidth)
+
+  for (let parent = selector.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+    const style = window.getComputedStyle(parent)
+    const clipsY = /(auto|scroll|hidden|clip)/.test(style.overflowY || style.overflow)
+    const clipsX = /(auto|scroll|hidden|clip)/.test(style.overflowX || style.overflow)
+    if (!clipsX && !clipsY) continue
+    const rect = parent.getBoundingClientRect()
+    if (clipsY) {
+      top = Math.max(top, rect.top + (parseFloat(style.borderTopWidth) || 0))
+      bottom = Math.min(bottom, rect.bottom - (parseFloat(style.borderBottomWidth) || 0))
+    }
+    if (clipsX) {
+      left = Math.max(left, rect.left + (parseFloat(style.borderLeftWidth) || 0))
+      right = Math.min(right, rect.right - (parseFloat(style.borderRightWidth) || 0))
+    }
+  }
+
+  const edge = 8
+  const gap = 6
+  const rect = selector.getBoundingClientRect()
+  const visibleTop = top + edge
+  const visibleBottom = Math.max(visibleTop, bottom - edge)
+  const aboveBottom = Math.max(visibleTop, Math.min(rect.top - gap, visibleBottom))
+  const belowTop = Math.min(visibleBottom, Math.max(rect.bottom + gap, visibleTop))
+  const availableAbove = aboveBottom - visibleTop
+  const availableBelow = visibleBottom - belowTop
+  const rem = parseFloat(window.getComputedStyle(document.documentElement).fontSize) || 16
+  const preferredHeight = 24 * rem
+  const above = availableBelow < preferredHeight && availableAbove > availableBelow
+  const width = Math.max(0, Math.min(Math.max(rect.width, 320), right - left - edge * 2))
+  const dropdownLeft = Math.max(left + edge, Math.min(rect.left, right - edge - width))
+
+  dropdownPlacement.value = above ? 'above' : 'below'
+  dropdownStyle.value = {
+    maxHeight: `${Math.min(preferredHeight, above ? availableAbove : availableBelow)}px`,
+    width: `${width}px`,
+    left: `${dropdownLeft - rect.left}px`,
+    top: above ? 'auto' : `${belowTop - rect.top}px`,
+    bottom: above ? `${rect.bottom - aboveBottom}px` : 'auto'
+  }
+}
+
+function schedulePositionUpdate(event?: Event): void {
+  // Scrolling the options must not reposition the list underneath the finger.
+  if (event?.type === 'scroll' && event.target instanceof Node && optionsRef.value?.contains(event.target)) return
+  if (positionFrame !== undefined) return
+  positionFrame = window.requestAnimationFrame(() => {
+    positionFrame = undefined
+    if (dropdownMounted.value && !isClosing.value) updateDropdownPosition()
+  })
+}
+
+function startPositionTracking(): void {
+  stopPositionTracking()
+  window.addEventListener('resize', schedulePositionUpdate, { passive: true })
+  window.addEventListener('scroll', schedulePositionUpdate, { passive: true, capture: true })
+  trackedViewport = window.visualViewport
+  trackedViewport?.addEventListener('resize', schedulePositionUpdate, { passive: true })
+  trackedViewport?.addEventListener('scroll', schedulePositionUpdate, { passive: true })
+  if (typeof ResizeObserver !== 'undefined' && selectorRef.value) {
+    positionObserver = new ResizeObserver(() => schedulePositionUpdate())
+    for (let element: HTMLElement | null = selectorRef.value; element; element = element.parentElement) {
+      positionObserver.observe(element)
+    }
+  }
+}
+
+function stopPositionTracking(): void {
+  window.removeEventListener('resize', schedulePositionUpdate)
+  window.removeEventListener('scroll', schedulePositionUpdate, true)
+  trackedViewport?.removeEventListener('resize', schedulePositionUpdate)
+  trackedViewport?.removeEventListener('scroll', schedulePositionUpdate)
+  trackedViewport = null
+  positionObserver?.disconnect()
+  positionObserver = undefined
+  if (positionFrame !== undefined) {
+    window.cancelAnimationFrame(positionFrame)
+    positionFrame = undefined
+  }
+}
+
 onMounted(() => {
   document.addEventListener('click', handleClickOutside)
 })
 
 onBeforeUnmount(() => {
   clearMotionTimers()
+  stopPositionTracking()
   document.removeEventListener('click', handleClickOutside)
 })
 
@@ -429,9 +533,7 @@ function clearMotionTimers(): void {
 
 .cs-dropdown {
   position: absolute;
-  top: calc(100% + 6px);
   left: 0;
-  right: 0;
   background: #fffefb;
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -441,8 +543,7 @@ function clearMotionTimers(): void {
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* PC端让下拉稍宽一点，获得更多显示空间 */
-  min-width: min(320px, 100vw - 2rem);
+  box-sizing: border-box;
 }
 
 .cs-search {
@@ -512,10 +613,6 @@ function clearMotionTimers(): void {
 }
 
 @media (max-width: 820px) {
-  .cs-dropdown {
-    max-height: min(24rem, 55dvh);
-  }
-
   .cs-search-input {
     font-size: 16px;
   }

@@ -10,6 +10,10 @@ const { parseImage, save, listCategories } = vi.hoisted(() => ({
   parseImage: vi.fn(), save: vi.fn(), listCategories: vi.fn()
 }))
 
+vi.mock('@/stores/outbox', () => ({
+  saveOrQueueTransaction: (...args: unknown[]) => save(...args).then(transaction => transaction?.queued ? transaction : ({ queued: false, transaction }))
+}))
+
 vi.mock('@/api', () => ({
   transactionsApi: { parseImage, save },
   categoriesApi: { list: listCategories }
@@ -24,6 +28,8 @@ const capabilities: TransactionCapabilities = {
 const mounted: ReturnType<typeof mount>[] = []
 
 beforeEach(() => {
+  localStorage.clear()
+  localStorage.setItem('activeLedgerId', '1')
   vi.clearAllMocks()
   parseImage.mockReset()
   save.mockReset()
@@ -86,6 +92,29 @@ describe('截图识别与逐笔确认', () => {
     await wrapper.setProps({ modelValue: false })
     await wrapper.setProps({ modelValue: true })
     expect(wrapper.text()).toContain('已保存 2 笔')
+  })
+
+  it('重建组件后恢复已识别草稿，重试复用key，队列成功行不能再次保存', async () => {
+    parseImage.mockResolvedValue({ transactions: [draft()], warnings: [] })
+    save.mockRejectedValueOnce(new ApiError('暂不可用', 400)).mockResolvedValueOnce({ queued: true })
+    const first = await open()
+    await upload(first)
+    await recognize(first)
+    await first.get('form').trigger('submit')
+    await flushPromises()
+    const key = save.mock.calls[0][0].clientRequestId
+    first.unmount()
+    const restored = await open()
+    expect(restored.find('img').exists()).toBe(false)
+    expect((restored.get('#image-description').element as HTMLInputElement).value).toBe('咖啡')
+    await restored.get('form').trigger('submit')
+    await flushPromises()
+    expect(save.mock.calls[1][0].clientRequestId).toBe(key)
+    expect(save.mock.calls[1][0].tagIds).toEqual([])
+    expect(restored.text()).toContain('待同步 1 笔')
+    expect(restored.find('form').exists()).toBe(false)
+    expect(restored.findAll('.image-row-button')[0].attributes('disabled')).toBeDefined()
+    expect(localStorage.getItem('accounting:v1:draft:anonymous:1:image-transactions')).not.toContain('blob:preview')
   })
 
   it('缺失日期、分类和修改收支类型后必须补齐再保存', async () => {

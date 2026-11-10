@@ -1,21 +1,27 @@
 import { computed, reactive } from 'vue'
 import { authApi } from '@/api'
 import { ApiError, clearSession } from '@/api/http'
+import { advanceSessionEpoch, rememberSession, storedSession } from '@/utils/localState'
+import { markCachedData } from '@/composables/useConnectivity'
+import { useLedgerStore } from '@/stores/ledger'
 
 const state = reactive({
   initialized: false,
   authenticated: false,
   username: '',
+  offlineSession: false,
 })
+let initialization: Promise<void> | null = null
+let sessionGeneration = 0
 
 export function useAuthStore() {
   const isAuthenticated = computed(() => state.authenticated)
 
-  async function initialize(): Promise<void> {
-    if (state.initialized) return
-
+  async function restore(): Promise<void> {
+    const generation = sessionGeneration
     try {
       const result = await authApi.me()
+      if (generation !== sessionGeneration) return
       if (result) {
         setAuthenticated(result.username)
       } else {
@@ -23,25 +29,45 @@ export function useAuthStore() {
         forceLogout()
       }
     } catch (error) {
-      if (error instanceof ApiError) {
-        // 收到服务器明确响应（非 401 的 4xx/5xx）：会话状态可判定，按失效处理。
+      if (generation !== sessionGeneration) return
+      if (error instanceof ApiError && error.status && error.status < 500) {
         forceLogout()
+      } else {
+        const saved = storedSession()
+        if (saved) {
+          state.authenticated = true
+          state.username = saved.username
+          state.offlineSession = true
+          markCachedData()
+        }
       }
-      // 纯网络错误（fetch reject）：会话状态未知，保留本地账本选择等状态，
-      // 保持未认证让路由守卫引导到登录页；网络恢复后刷新即可凭 cookie 恢复会话。
     } finally {
-      state.initialized = true
+      if (generation === sessionGeneration) state.initialized = true
     }
   }
 
+  async function initialize(force = false): Promise<void> {
+    if (initialization) return initialization
+    if (state.initialized && !force) return
+    const promise = restore().finally(() => { if (initialization === promise) initialization = null })
+    initialization = promise
+    return initialization
+  }
+
   async function login(username: string, password: string): Promise<void> {
+    advanceSessionEpoch()
+    const generation = ++sessionGeneration
+    initialization = null
     const result = await authApi.login(username, password)
-    setAuthenticated(result.username)
+    if (generation === sessionGeneration) { setAuthenticated(result.username); state.initialized = true }
   }
 
   async function register(username: string, password: string): Promise<void> {
+    advanceSessionEpoch()
+    const generation = ++sessionGeneration
+    initialization = null
     const result = await authApi.register(username, password)
-    setAuthenticated(result.username)
+    if (generation === sessionGeneration) { setAuthenticated(result.username); state.initialized = true }
   }
 
   async function logout(): Promise<void> {
@@ -55,14 +81,26 @@ export function useAuthStore() {
 
   /** 仅清理本地登录状态，不调服务端接口（用于 session 失效时强制登出）。 */
   function forceLogout(): void {
+    sessionGeneration += 1
+    initialization = null
     clearSession()
+    useLedgerStore().reset()
     state.authenticated = false
     state.username = ''
+    state.offlineSession = false
+    state.initialized = true
   }
 
   function setAuthenticated(username: string): void {
+    const previous = storedSession()?.username
+    if (previous && previous !== username) {
+      clearSession()
+      useLedgerStore().reset()
+    }
     state.authenticated = true
     state.username = username
+    state.offlineSession = false
+    rememberSession(username)
   }
 
   return {

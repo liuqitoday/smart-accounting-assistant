@@ -7,7 +7,7 @@
       </RouterLink>
 
       <nav class="nav-list">
-        <RouterLink v-for="item in navItems" :key="item.to" class="nav-link" :to="item.to">
+        <RouterLink v-for="item in navItems" :key="item.to" class="nav-link" :to="navigation.destination(item.to)">
           <component :is="item.icon" class="nav-icon" />
           <span>{{ item.label }}</span>
         </RouterLink>
@@ -15,7 +15,7 @@
 
       <nav class="nav-list nav-list-secondary desktop-only" aria-label="管理">
         <span class="nav-section-label">管理</span>
-        <RouterLink v-for="item in managementItems" :key="item.to" class="nav-link nav-link-secondary" :to="item.to">
+        <RouterLink v-for="item in managementItems" :key="item.to" class="nav-link nav-link-secondary" :to="navigation.destination(item.to)">
           <component :is="item.icon" class="nav-icon" />
           <span>{{ item.label }}</span>
         </RouterLink>
@@ -87,11 +87,11 @@
       </section>
 
       <nav class="tabbar">
-        <RouterLink class="tab-item" to="/dashboard">
+        <RouterLink class="tab-item" :to="navigation.destination('/dashboard')">
           <Home />
           <span>首页</span>
         </RouterLink>
-        <RouterLink class="tab-item" to="/transactions">
+        <RouterLink class="tab-item" :to="navigation.destination('/transactions')">
           <ListChecks />
           <span>明细</span>
         </RouterLink>
@@ -100,11 +100,11 @@
             <Plus />
           </button>
         </span>
-        <RouterLink class="tab-item" to="/statistics">
+        <RouterLink class="tab-item" :to="navigation.destination('/statistics')">
           <BarChart3 />
           <span>统计</span>
         </RouterLink>
-        <RouterLink class="tab-item" to="/profile">
+        <RouterLink class="tab-item" :to="navigation.destination('/profile')">
           <UserRound />
           <span>我的</span>
         </RouterLink>
@@ -117,6 +117,8 @@
 
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, onMounted, ref, useId } from 'vue'
+import { openRecording } from '@/stores/recording'
+import { useNavigation } from '@/stores/navigation'
 import { useRouter } from 'vue-router'
 import {
   BarChart3,
@@ -142,6 +144,7 @@ import { cssMs } from '@/utils/css'
 import { roleLabel } from '@/utils/format'
 
 const router = useRouter()
+const navigation = useNavigation()
 const auth = useAuthStore()
 const ledger = useLedgerStore()
 const passwordModalOpen = ref(false)
@@ -180,8 +183,8 @@ onBeforeUnmount(() => {
   document.removeEventListener('keydown', handleKeydown)
 })
 
-async function goRecord(): Promise<void> {
-  await router.push({ name: 'dashboard', query: { focus: '1' } })
+function goRecord(): void {
+  openRecording()
 }
 
 async function logout(): Promise<void> {

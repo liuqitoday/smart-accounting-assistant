@@ -1,5 +1,5 @@
 <template>
-  <AppShell>
+  <div class="view-page">
     <PageHeader title="账本管理" subtitle="创建多个账本并管理成员权限。">
       <template #actions>
         <button class="button" type="button" @click="openCreate">
@@ -168,7 +168,7 @@
         </button>
       </div>
     </UiModal>
-  </AppShell>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -176,7 +176,6 @@ import { computed, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Plus } from 'lucide-vue-next'
 import { ledgerApi } from '@/api'
-import AppShell from '@/components/AppShell.vue'
 import ColorSwatches from '@/components/ColorSwatches.vue'
 import MessageBanner from '@/components/MessageBanner.vue'
 import PageHeader from '@/components/PageHeader.vue'

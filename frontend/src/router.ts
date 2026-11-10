@@ -2,9 +2,17 @@ import { nextTick } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useLedgerStore } from '@/stores/ledger'
+import { useNavigation } from '@/stores/navigation'
+import { closeModalsForNavigation } from '@/utils/modalHistory'
+
+const navigation = useNavigation()
 
 const router = createRouter({
   history: createWebHistory(),
+  async scrollBehavior(to, _from, savedPosition) {
+    await nextTick()
+    return savedPosition || navigation.position(to.fullPath) || { left: 0, top: 0 }
+  },
   routes: [
     { path: '/', redirect: '/dashboard' },
     { path: '/login', name: 'login', component: () => import('@/views/LoginView.vue'), meta: { public: true, title: '登录' } },
@@ -27,7 +35,9 @@ const router = createRouter({
   ]
 })
 
-router.beforeEach(async to => {
+router.beforeEach(async (to, from) => {
+  if (to.fullPath !== from.fullPath) closeModalsForNavigation()
+  navigation.saveScroll(from.fullPath)
   const auth = useAuthStore()
   await auth.initialize()
 
@@ -40,9 +50,9 @@ router.beforeEach(async to => {
   if (!to.meta.public && auth.isAuthenticated.value) {
     const ledger = useLedgerStore()
     if (!ledger.state.initialized) {
-      await ledger.load()
+      try { await ledger.load() } catch { /* App shell offers a retry without discarding the session. */ }
     }
-    if (!ledger.state.ledgers.length && to.name !== 'ledgers') {
+    if (ledger.state.initialized && !ledger.state.ledgers.length && to.name !== 'ledgers') {
       return { name: 'ledgers' }
     }
   }
@@ -50,6 +60,7 @@ router.beforeEach(async to => {
 })
 
 router.afterEach(async to => {
+  navigation.remember(to.path, to.fullPath)
   const title = typeof to.meta.title === 'string' ? to.meta.title : '记账助手'
   document.title = title === '记账助手' ? title : `${title} · 记账助手`
   if (to.query.focus) return

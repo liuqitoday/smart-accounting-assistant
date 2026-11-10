@@ -21,7 +21,7 @@ PUT  /api/auth/password     # 修改密码
 GET    /api/transactions/capabilities # 功能开关与图片上传限制
 POST   /api/transactions/parse-only   # AI 解析（不保存）
 POST   /api/transactions/parse-image  # 图片识别（multipart，仅返回待核对记录）
-POST   /api/transactions/save         # 保存解析结果
+POST   /api/transactions/save         # 保存解析结果或手动收支（支持幂等重试）
 GET    /api/transactions              # 列表（分页、筛选）
 GET    /api/transactions/{id}
 PUT    /api/transactions/{id}
@@ -30,6 +30,30 @@ POST   /api/transactions/{id}/tags    # 更新标签
 GET    /api/transactions/export       # CSV 导出
 POST   /api/transactions/import       # CSV 导入
 ```
+
+### 保存、标签与重试
+
+`POST /api/transactions/save` 支持以下可选字段：
+
+| 字段 | 类型 | 含义 |
+|---|---|---|
+| `tagIds` | 正整数数组 | 与交易一起保存的标签 ID，最多 100 项；省略或为 `null` 表示不添加标签 |
+| `clientRequestId` | UUID 字符串 | 同一笔保存请求的稳定标识，用于断网恢复、超时或响应丢失后的安全重试 |
+
+标签必须属于当前账本或为可用的系统标签。交易、标签及重试记录在同一个数据库事务内保存，标签校验失败不会留下半笔账目。
+
+请求标识按登录账号和账本隔离。同一账号、账本、`clientRequestId` 和相同内容重复提交时，返回首次保存的结果，不重复入账；相同标识用于不同内容时返回 HTTP 400，`errorCode` 为 `IDEMPOTENCY_CONFLICT`。修改内容或新增另一笔账目时应使用新 UUID；未提供 `clientRequestId` 的请求不具备此去重保证。
+
+`PUT /api/transactions/{id}` 也支持 `tagIds`：省略或为 `null` 时保留原标签，`[]` 清空标签，非空数组替换为指定标签。前端离线队列仅用于新增普通收入和支出，转账与编辑已有交易仍需联网。
+
+## 账户选项
+
+```http
+GET /api/accounts                    # 账户列表（含余额）
+GET /api/accounts/options            # 表单下拉使用的轻量账户列表
+```
+
+`/api/accounts/options` 使用相同的登录态和账本权限，返回 `ApiResponse<AccountOptionDto[]>`。每项包含 `id`、`name`、`type`、`icon`、`color`、`active`、`default`，不计算或返回账户余额。列表包含当前账本的启用和停用账户；新建交易时应仅显示 `active=true` 的选项。`default` 表示当前用户在该账本设置的默认账户，停用账户不会标记为默认。
 
 ## 截图记账
 
@@ -140,7 +164,7 @@ curl 'http://localhost:8081/api/transactions/save' \
   }'
 ```
 
-保存成功仍返回 `ApiResponse<TransactionParseResponse>`，其中 `data.id` 为新交易 ID，`message` 为“交易记录保存成功”。每次调用只保存一笔；客户端应标记已保存项，避免把同一项再次提交。重新上传相同截图不会自动去重，应核对是否已经记账。
+保存成功仍返回 `ApiResponse<TransactionParseResponse>`，其中 `data.id` 为新交易 ID，`message` 为“交易记录保存成功”。每次调用只保存一笔；客户端应为每笔确认结果分配稳定的 `clientRequestId`，重试同一内容时复用该标识，并标记已保存项。重新上传相同截图不会按图片内容自动去重，应核对是否已经记账。
 
 ### 配额与错误
 

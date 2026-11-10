@@ -1,10 +1,18 @@
 import type { ApiResponse } from '@/types'
+import { readonly, ref } from 'vue'
+import { cachedQuery, clearQueryCache, invalidateQueries, queryKey } from '@/api/queryCache'
+import { advanceSessionEpoch, currentSessionEpoch, clearUserLocalData, userScope } from '@/utils/localState'
+import { setConnectionAvailable } from '@/composables/useConnectivity'
+
+export { invalidateQueries } from '@/api/queryCache'
 
 const LEDGER_KEY = 'activeLedgerId'
 const CSRF_COOKIE = 'XSRF-TOKEN'
 const CSRF_HEADER = 'X-XSRF-TOKEN'
 
 let unauthorizedHandler: (() => void) | null = null
+const pendingOperations = ref(0)
+export function useRequestActivity() { return { pendingOperations: readonly(pendingOperations) } }
 
 export class ApiError extends Error {
   status?: number
@@ -35,6 +43,9 @@ export function setActiveLedgerId(id: number | string | null | undefined): void 
 }
 
 export function clearSession(): void {
+  advanceSessionEpoch()
+  clearQueryCache()
+  clearUserLocalData()
   localStorage.removeItem(LEDGER_KEY)
 }
 
@@ -58,12 +69,17 @@ export function queryString(params: Record<string, unknown>): string {
   return serialized ? `?${serialized}` : ''
 }
 
+let csrfRequest: Promise<void> | null = null
 export async function ensureCsrfCookie(): Promise<void> {
   if (readCookie(CSRF_COOKIE)) return
-  await fetch('/api/auth/csrf', {
+  if (csrfRequest) return csrfRequest
+  csrfRequest = timedFetch('/api/auth/csrf', {
     method: 'GET',
     credentials: 'same-origin',
-  })
+  }).then(response => {
+    if (!response.ok) throw new ApiError('连接失败，请稍后重试', response.status)
+  }).finally(() => { csrfRequest = null })
+  return csrfRequest
 }
 
 export function authHeaders(extra?: HeadersInit, method = 'GET'): Headers {
@@ -82,8 +98,13 @@ export function authHeaders(extra?: HeadersInit, method = 'GET'): Headers {
   return headers
 }
 
-export async function get<T>(path: string, params?: Record<string, unknown>): Promise<T> {
-  return executeRequest<T>(`${path}${params ? queryString(params) : ''}`)
+export async function get<T>(path: string, params?: Record<string, unknown>, options: { force?: boolean; signal?: AbortSignal } = {}): Promise<T> {
+  const url = `${path}${params ? queryString(params) : ''}`
+  const headers = authHeaders()
+  const load = () => executeRequest<T>(url, { headers, signal: options.signal })
+  if (options.signal || path.includes('/auth/') || path.includes('/members')) return load()
+  const ttl = path === '/api/categories' || path === '/api/transactions/capabilities' ? 5 * 60000 : 30000
+  return cachedQuery(queryKey(url, headers.get('X-Ledger-Id') || ''), load, { ttl, force: options.force })
 }
 
 export async function getOptional<T>(path: string, params?: Record<string, unknown>): Promise<T | null> {
@@ -118,17 +139,23 @@ export function del<T>(path: string): Promise<T> {
 
 export async function rawFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const method = init.method || 'GET'
+  const owner = userScope()
+  const epoch = currentSessionEpoch()
+  const headers = authHeaders(init.headers, method)
   if (isMutating(method)) {
     await ensureCsrfCookie()
   }
 
-  const response = await fetch(normalizePath(path), {
+  if (owner !== userScope() || epoch !== currentSessionEpoch()) throw new ApiError('登录状态已变更，请在当前账号下重试', 409)
+  if (isMutating(method)) headers.set(CSRF_HEADER, readCookie(CSRF_COOKIE))
+  const response = await timedFetch(normalizePath(path), {
     ...init,
     credentials: 'same-origin',
-    headers: authHeaders(init.headers, method),
+    headers,
   })
 
   if (response.status === 401) {
+    if (owner !== userScope() || epoch !== currentSessionEpoch()) throw new ApiError('此请求所属的登录状态已变更', 401)
     handleUnauthorized()
   }
 
@@ -144,20 +171,39 @@ async function executeRequest<T>(
   init: RequestInit = {},
   options: { silentUnauthorized?: boolean } = {},
 ): Promise<T> {
+  const track = isMutating(init.method || 'GET')
+  if (track) pendingOperations.value += 1
+  try { return await runRequest<T>(path, init, options) }
+  finally { if (track) pendingOperations.value -= 1 }
+}
+
+async function runRequest<T>(
+  path: string,
+  init: RequestInit = {},
+  options: { silentUnauthorized?: boolean } = {},
+): Promise<T> {
   const method = init.method || 'GET'
+  // Capture the ledger before any CSRF round trip. Switching ledger while an
+  // operation is pending must not redirect the write to the new ledger.
+  const headers = authHeaders(init.headers, method)
+  const owner = userScope()
+  const epoch = currentSessionEpoch()
   if (isMutating(method)) {
     await ensureCsrfCookie()
+    headers.set(CSRF_HEADER, readCookie(CSRF_COOKIE))
   }
 
-  const response = await fetch(normalizePath(path), {
+  if (owner !== userScope() || epoch !== currentSessionEpoch()) throw new ApiError('登录状态已变更，请在当前账号下重试', 409)
+  const response = await timedFetch(normalizePath(path), {
     ...init,
     credentials: 'same-origin',
-    headers: authHeaders(init.headers, method),
-  })
+    headers,
+  }, /\/parse-|\/analysis\/chat/.test(path) ? 70000 : 20000)
 
   const payload = (await response.json().catch(() => null)) as ApiResponse<T> | null
 
   if (response.status === 401) {
+    if (owner !== userScope() || epoch !== currentSessionEpoch()) throw new ApiError('此请求所属的登录状态已变更', 401)
     if (options.silentUnauthorized) {
       return null as T
     }
@@ -171,7 +217,38 @@ async function executeRequest<T>(
   if (!payload) throw new ApiError('服务端返回为空', response.status)
   if (!payload.success) throw new ApiError(payload.message || '操作失败', response.status, payload)
 
+  if (isMutating(method) && !/\/auth\/|\/parse-|\/analysis\/chat/.test(path) && owner === userScope() && epoch === currentSessionEpoch()) {
+    const prefixes = path.startsWith('/api/transactions') || path.startsWith('/api/transfers') || path.startsWith('/api/recurring-bills')
+      ? ['/api/transactions', '/api/statistics', '/api/accounts', '/api/analysis', '/api/recurring-bills']
+      : path.startsWith('/api/accounts') ? ['/api/accounts', '/api/statistics']
+        : path.startsWith('/api/tags') ? ['/api/tags', '/api/transactions', '/api/recurring-bills']
+          : []
+    invalidateQueries(prefixes, headers.get('X-Ledger-Id') || undefined)
+    window.dispatchEvent(new Event('app:data-changed'))
+  }
+
   return payload.data
+}
+
+async function timedFetch(path: string, init: RequestInit, timeout = 15000): Promise<Response> {
+  const controller = new AbortController()
+  const abort = () => controller.abort(init.signal?.reason)
+  if (init.signal?.aborted) abort()
+  else init.signal?.addEventListener('abort', abort, { once: true })
+  let timedOut = false
+  const timer = setTimeout(() => { timedOut = true; controller.abort() }, timeout)
+  try {
+    const response = await fetch(path, { ...init, signal: controller.signal })
+    setConnectionAvailable(true)
+    return response
+  } catch (error) {
+    if (timedOut) throw new DOMException('请求超时，请重试；已填写的内容会保留', 'TimeoutError')
+    if (error instanceof TypeError) setConnectionAvailable(false)
+    throw error
+  } finally {
+    clearTimeout(timer)
+    init.signal?.removeEventListener('abort', abort)
+  }
 }
 
 function handleUnauthorized(payload?: ApiResponse<unknown> | null): never {

@@ -1,5 +1,5 @@
 <template>
-  <AppShell>
+  <div class="statistics-view">
     <PageHeader title="统计分析" subtitle="查看当前账本的收支汇总、分类构成和趋势。" />
 
     <MessageBanner :message="message.text" :type="message.type" @dismissed="clear" />
@@ -33,25 +33,35 @@
         </button>
       </div>
 
+      <div v-if="summaryError" class="module-notice" role="alert"><span>{{ summaryError }}</span><button class="button ghost compact" type="button" @click="loadSummary">重试汇总</button></div>
+      <p v-if="summaryLoading && summary" class="refresh-status" role="status">正在更新汇总，当前显示上次结果</p>
       <div id="statistics-period-panel" class="grid cols-4" role="tabpanel" :aria-labelledby="activePeriodTabId">
         <div class="card stat-card">
           <span class="stat-label">收入</span>
-          <AnimatedNumber class="stat-value positive" :value="formatMoney(summary?.totalIncome)" />
-          <StatDelta :pct="summary?.incomeChangePct ?? null" :invert="false" />
+          <SkeletonBlock v-if="summaryLoading && !summary" style="height: 32px; width: 85%" />
+          <AnimatedNumber v-else-if="summary" class="stat-value positive" :value="formatMoney(summary?.totalIncome)" />
+          <span v-if="!summaryLoading && !summary" class="stat-value">—</span>
+          <StatDelta v-if="summary" :pct="summary?.incomeChangePct ?? null" :invert="false" />
         </div>
         <div class="card stat-card">
           <span class="stat-label">支出</span>
-          <AnimatedNumber class="stat-value negative" :value="formatMoney(summary?.totalExpense)" />
-          <StatDelta :pct="summary?.expenseChangePct ?? null" :invert="true" />
+          <SkeletonBlock v-if="summaryLoading && !summary" style="height: 32px; width: 85%" />
+          <AnimatedNumber v-else-if="summary" class="stat-value negative" :value="formatMoney(summary?.totalExpense)" />
+          <span v-if="!summaryLoading && !summary" class="stat-value">—</span>
+          <StatDelta v-if="summary" :pct="summary?.expenseChangePct ?? null" :invert="true" />
         </div>
         <div class="card stat-card">
           <span class="stat-label">结余</span>
-          <AnimatedNumber class="stat-value" :class="balanceClass" :value="formatMoney(summary?.balance)" />
-          <StatDelta :pct="balanceChangePct" :invert="false" />
+          <SkeletonBlock v-if="summaryLoading && !summary" style="height: 32px; width: 85%" />
+          <AnimatedNumber v-else-if="summary" class="stat-value" :class="balanceClass" :value="formatMoney(summary?.balance)" />
+          <span v-if="!summaryLoading && !summary" class="stat-value">—</span>
+          <StatDelta v-if="summary" :pct="balanceChangePct" :invert="false" />
         </div>
         <div class="card stat-card">
           <span class="stat-label">交易笔数</span>
-          <AnimatedNumber class="stat-value" :value="summary?.transactionCount || 0" />
+          <SkeletonBlock v-if="summaryLoading && !summary" style="height: 32px; width: 60%" />
+          <AnimatedNumber v-else-if="summary" class="stat-value" :value="summary.transactionCount" />
+          <span v-else class="stat-value">—</span>
         </div>
       </div>
 
@@ -79,9 +89,9 @@
             </div>
           </div>
           <div id="category-chart-panel" role="tabpanel" :aria-labelledby="activeCategoryTabId">
-            <div v-if="loading" class="loading-state chart-state">
-              <span class="t-shimmer" data-text="正在翻账本...">正在翻账本...</span>
-            </div>
+            <div v-if="categoryError" class="module-notice" role="alert"><span>{{ categoryError }}</span><button class="button ghost compact" type="button" @click="loadCategory">重试分类</button></div>
+            <p v-if="categoryLoading && categoryLoaded" class="refresh-status" role="status">正在更新分类，当前显示上次结果</p>
+            <div v-if="categoryLoading && !categoryLoaded" class="chart-state chart-skeleton" role="status" aria-label="正在加载分类统计"><SkeletonBlock style="height: 220px; width: 100%" /></div>
             <template v-else-if="categoryStats.length">
               <div class="chart-box">
                 <canvas ref="categoryCanvas" role="img" :aria-label="categoryChartLabel" />
@@ -107,7 +117,7 @@
                 </table>
               </div>
             </template>
-            <div v-else class="empty-state chart-state">
+            <div v-else-if="categoryLoaded" class="empty-state chart-state">
               暂无分类统计
               <RouterLink class="empty-action" :to="{ name: 'dashboard' }">去记一笔</RouterLink>
             </div>
@@ -118,13 +128,13 @@
           <div class="panel-header">
             <h2 class="panel-title">{{ trendConfig.title }}</h2>
           </div>
-          <div v-if="loading" class="loading-state chart-state">
-            <span class="t-shimmer" data-text="正在翻账本...">正在翻账本...</span>
-          </div>
+          <div v-if="trendError" class="module-notice" role="alert"><span>{{ trendError }}</span><button class="button ghost compact" type="button" @click="loadTrend">重试趋势</button></div>
+          <p v-if="trendLoading && trendLoaded" class="refresh-status" role="status">正在更新趋势，当前显示上次结果</p>
+          <div v-if="trendLoading && !trendLoaded" class="chart-state chart-skeleton" role="status" aria-label="正在加载趋势"><SkeletonBlock style="height: 220px; width: 100%" /></div>
           <div v-else-if="trendData.length" class="chart-box">
             <canvas ref="trendCanvas" role="img" :aria-label="trendChartLabel" />
           </div>
-          <div v-else class="empty-state chart-state">
+          <div v-else-if="trendLoaded" class="empty-state chart-state">
             暂无趋势数据
             <RouterLink class="empty-action" :to="{ name: 'dashboard' }">去记一笔</RouterLink>
           </div>
@@ -135,11 +145,11 @@
         <div class="panel-header">
           <h2 class="panel-title">大额支出</h2>
         </div>
-        <div v-if="loading" class="loading-state">
-          <span class="t-shimmer" data-text="正在翻账本...">正在翻账本...</span>
-        </div>
-        <div v-else-if="!topExpenses.length" class="empty-state coins">暂无支出记录</div>
-        <ol v-else class="rank-list">
+        <div v-if="expensesError" class="module-notice" role="alert"><span>{{ expensesError }}</span><button class="button ghost compact" type="button" @click="loadExpenses">重试大额支出</button></div>
+        <p v-if="expensesLoading && expensesLoaded" class="refresh-status" role="status">正在更新大额支出，当前显示上次结果</p>
+        <div v-if="expensesLoading && !expensesLoaded" class="expense-skeleton" role="status" aria-label="正在加载大额支出"><SkeletonBlock v-for="row in 3" :key="row" style="height: 48px; width: 100%" /></div>
+        <div v-else-if="expensesLoaded && !topExpenses.length" class="empty-state coins">暂无支出记录</div>
+        <ol v-else-if="topExpenses.length" class="rank-list">
           <li v-for="(t, i) in topExpenses" :key="t.id" class="rank-item">
             <span class="rank-num" :class="'rank-' + (i + 1)">#{{ i + 1 }}</span>
             <div class="rank-main">
@@ -155,11 +165,11 @@
         </ol>
       </section>
     </section>
-  </AppShell>
+  </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { computed, nextTick, onActivated, onBeforeUnmount, ref, shallowRef } from 'vue'
 import { ChevronRight, MessagesSquare } from 'lucide-vue-next'
 import {
   ArcElement,
@@ -176,7 +186,8 @@ import {
   Tooltip
 } from 'chart.js'
 import { statisticsApi } from '@/api'
-import AppShell from '@/components/AppShell.vue'
+import SkeletonBlock from '@/components/SkeletonBlock.vue'
+import { useDataRefresh } from '@/composables/useDataRefresh'
 import AnimatedNumber from '@/components/AnimatedNumber.vue'
 import MessageBanner from '@/components/MessageBanner.vue'
 import PageHeader from '@/components/PageHeader.vue'
@@ -215,7 +226,18 @@ const categoryTypes: Array<{ value: TransactionType; label: string }> = [
 
 const period = ref('current_month')
 const categoryType = ref<TransactionType>('EXPENSE')
-const loading = ref(false)
+const summaryLoading = ref(false)
+const categoryLoading = ref(false)
+const trendLoading = ref(false)
+const expensesLoading = ref(false)
+const categoryLoaded = ref(false)
+const trendLoaded = ref(false)
+const expensesLoaded = ref(false)
+const summaryError = ref('')
+const categoryError = ref('')
+const trendError = ref('')
+const expensesError = ref('')
+const displayedTrendDaily = ref(true)
 const summary = ref<StatisticsSummary | null>(null)
 const categoryStats = ref<CategoryStatistic[]>([])
 const trendData = ref<TrendData[]>([])
@@ -225,7 +247,7 @@ const trendCanvas = ref<HTMLCanvasElement | null>(null)
 // Chart 实例是重型外部对象，深响应式代理无意义且拖慢销毁/重建，用 shallowRef 存
 const categoryChart = shallowRef<Chart | null>(null)
 const trendChart = shallowRef<Chart | null>(null)
-const { message, showError, clear } = useMessage()
+const { message, clear } = useMessage()
 const { tabsRef: periodTabsRef, syncTabs: syncPeriodTabs, handleTabKeydown: handlePeriodTabKeydown } = useSlidingTabs(index => {
   const target = periods[index]
   if (target) selectPeriod(target.value)
@@ -236,8 +258,11 @@ const { tabsRef: categoryTabsRef, syncTabs: syncCategoryTabs, handleTabKeydown: 
 })
 
 // 竞态守卫：快速切换周期/类型时，仅最后一次发起的请求允许落值
-let loadSeq = 0
+let summarySeq = 0
 let categorySeq = 0
+let trendSeq = 0
+let expensesSeq = 0
+let trendChartType: 'bar' | 'line' | null = null
 
 const balanceClass = computed(() => (toNumber(summary.value?.balance) >= 0 ? 'positive' : 'negative'))
 const activePeriodTabId = computed(() => `period-tab-${period.value}`)
@@ -279,8 +304,20 @@ const balanceChangePct = computed<number | null>(() => {
   return (cur - prev) / prev * 100
 })
 
-onMounted(loadAll)
+useDataRefresh(loadAll)
+onActivated(() => {
+  syncPeriodTabs(false)
+  syncCategoryTabs(false)
+  void nextTick(() => {
+    categoryChart.value?.resize()
+    trendChart.value?.resize()
+  })
+})
 onBeforeUnmount(() => {
+  summarySeq++
+  categorySeq++
+  trendSeq++
+  expensesSeq++
   categoryChart.value?.destroy()
   trendChart.value?.destroy()
 })
@@ -300,55 +337,95 @@ function selectCategoryType(value: TransactionType): void {
 }
 
 async function loadAll(): Promise<void> {
-  const mySeq = ++loadSeq
-  const myCategorySeq = ++categorySeq
-  loading.value = true
   clear()
+  await Promise.allSettled([loadSummary(), loadCategory(), loadTrend(), loadExpenses()])
+}
+
+async function loadSummary(): Promise<void> {
+  const sequence = ++summarySeq
+  summaryLoading.value = true
+  summaryError.value = ''
   try {
-    const cfg = trendConfig.value
-    const [summaryResult, categoryResult, trendResult, recentResult] = await Promise.all([
-      statisticsApi.summary(period.value),
-      statisticsApi.byCategory(period.value, categoryType.value),
-      cfg.daily ? statisticsApi.dailyTrend(period.value) : statisticsApi.trend(cfg.months),
-      statisticsApi.topExpenses(period.value)
-    ])
-    if (mySeq !== loadSeq) return  // 已有更新的请求发出，丢弃本次过期响应
-    summary.value = summaryResult
-    trendData.value = trendResult
-    topExpenses.value = recentResult
-    // 分类统计可能已被更晚发起的 loadCategory 刷新，仅在仍是最新时落值
-    if (myCategorySeq === categorySeq) categoryStats.value = categoryResult
-    // 先撤下加载态再等一帧，让 v-if 的 canvas 完成挂载后才渲染图表
-    loading.value = false
-    await nextTick()
-    // 图表始终按当前 state 重绘（categoryStats 可能来自更新的 loadCategory，重绘同样正确）
-    renderCategoryChart()
-    renderTrendChart()
-  } catch (error) {
-    if (mySeq !== loadSeq) return
-    showError(error, '统计数据加载失败')
+    const result = await statisticsApi.summary(period.value)
+    if (sequence === summarySeq) summary.value = result
+  } catch {
+    if (sequence === summarySeq) summaryError.value = summary.value ? '汇总更新失败，当前保留上次结果。' : '收支汇总加载失败。'
   } finally {
-    if (mySeq === loadSeq) loading.value = false
+    if (sequence === summarySeq) summaryLoading.value = false
   }
 }
 
 async function loadCategory(): Promise<void> {
-  const mySeq = ++categorySeq
+  const sequence = ++categorySeq
+  categoryLoading.value = true
+  categoryError.value = ''
   try {
     const result = await statisticsApi.byCategory(period.value, categoryType.value)
-    if (mySeq !== categorySeq) return
+    if (sequence !== categorySeq) return
     categoryStats.value = result
+    categoryLoaded.value = true
+    categoryLoading.value = false
     await nextTick()
-    renderCategoryChart()
-  } catch (error) {
-    if (mySeq !== categorySeq) return
-    showError(error, '分类统计加载失败')
+    if (sequence === categorySeq) renderCategoryChart()
+  } catch {
+    if (sequence === categorySeq) categoryError.value = categoryLoaded.value ? '分类更新失败，当前保留上次结果。' : '分类统计加载失败。'
+  } finally {
+    if (sequence === categorySeq) categoryLoading.value = false
+  }
+}
+
+async function loadTrend(): Promise<void> {
+  const sequence = ++trendSeq
+  const config = trendConfig.value
+  trendLoading.value = true
+  trendError.value = ''
+  try {
+    const result = await (config.daily ? statisticsApi.dailyTrend(period.value) : statisticsApi.trend(config.months))
+    if (sequence !== trendSeq) return
+    trendData.value = result
+    displayedTrendDaily.value = config.daily
+    trendLoaded.value = true
+    trendLoading.value = false
+    await nextTick()
+    if (sequence === trendSeq) renderTrendChart()
+  } catch {
+    if (sequence === trendSeq) trendError.value = trendLoaded.value ? '趋势更新失败，当前保留上次结果。' : '收支趋势加载失败。'
+  } finally {
+    if (sequence === trendSeq) trendLoading.value = false
+  }
+}
+
+async function loadExpenses(): Promise<void> {
+  const sequence = ++expensesSeq
+  expensesLoading.value = true
+  expensesError.value = ''
+  try {
+    const result = await statisticsApi.topExpenses(period.value)
+    if (sequence !== expensesSeq) return
+    topExpenses.value = result
+    expensesLoaded.value = true
+  } catch {
+    if (sequence === expensesSeq) expensesError.value = expensesLoaded.value ? '大额支出更新失败，当前保留上次结果。' : '大额支出加载失败。'
+  } finally {
+    if (sequence === expensesSeq) expensesLoading.value = false
   }
 }
 
 function renderCategoryChart(): void {
+  if (!categoryStats.value.length) {
+    categoryChart.value?.destroy()
+    categoryChart.value = null
+    return
+  }
+  if (!categoryCanvas.value) return
+  if (categoryChart.value && categoryChart.value.canvas === categoryCanvas.value) {
+    categoryChart.value.data.labels = categoryStats.value.map(categoryLabel)
+    categoryChart.value.data.datasets[0].data = categoryStats.value.map(item => toNumber(item.amount))
+    categoryChart.value.data.datasets[0].backgroundColor = seriesColors(categoryStats.value.length)
+    categoryChart.value.update('none')
+    return
+  }
   categoryChart.value?.destroy()
-  if (!categoryCanvas.value || !categoryStats.value.length) return
   categoryChart.value = new Chart(categoryCanvas.value, {
     type: 'doughnut',
     data: {
@@ -374,11 +451,25 @@ function renderCategoryChart(): void {
 }
 
 function renderTrendChart(): void {
+  if (!trendData.value.length) {
+    trendChart.value?.destroy()
+    trendChart.value = null
+    trendChartType = null
+    return
+  }
+  if (!trendCanvas.value) return
+  const nextType = displayedTrendDaily.value ? 'bar' : 'line'
+  if (trendChart.value && trendChartType === nextType && trendChart.value.canvas === trendCanvas.value) {
+    trendChart.value.data.labels = trendData.value.map(item => displayedTrendDaily.value ? formatDayLabel(item.month) : item.month)
+    const values = [trendData.value.map(item => toNumber(item.income)), trendData.value.map(item => toNumber(item.expense)), trendData.value.map(item => toNumber(item.balance))]
+    trendChart.value.data.datasets.forEach((dataset, index) => { dataset.data = values[index] })
+    trendChart.value.update('none')
+    return
+  }
   trendChart.value?.destroy()
-  if (!trendCanvas.value || !trendData.value.length) return
-  const cfg = trendConfig.value
+  trendChartType = nextType
 
-  if (cfg.daily) {
+  if (displayedTrendDaily.value) {
     trendChart.value = new Chart(trendCanvas.value, {
       type: 'bar',
       data: {
@@ -456,6 +547,10 @@ function categoryName(t: Transaction): string {
 </script>
 
 <style scoped>
+.module-notice { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; color: var(--color-danger-text); font-size: 14px; }
+.refresh-status { margin: 0; padding: 8px 16px; color: var(--color-muted); font-size: 14px; }
+.chart-skeleton { padding: 20px; }
+.expense-skeleton { display: grid; gap: 12px; padding: 20px; }
 .top-expenses-section {
   margin-top: var(--space-md);
 }
