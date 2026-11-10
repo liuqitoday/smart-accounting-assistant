@@ -4,7 +4,7 @@
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://openjdk.org/)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.4-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.16-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![Vue](https://img.shields.io/badge/Vue-3.5+-green.svg)](https://vuejs.org/)
 
 一个前后端一体的智能记账应用，使用自然语言即可完成记账。
@@ -18,6 +18,8 @@
 ## 特性
 
 **AI 自然语言解析** - 输入"今天中午和同事在海底捞吃火锅花了320"，自动提取金额、类型、商户、分类
+
+**AI 截图记账** - 上传消费或收入截图，自动提取多笔交易并匹配分类、账户，逐笔核对后保存；支持桌面和移动端，配置支持图片输入的模型后可开启
 
 **AI 智能分析** - 用自然语言提问"本月餐饮花了多少"、"收入最多的是哪个月"，AI 自动生成数据分析
 
@@ -57,7 +59,7 @@
 
 ## 技术栈
 
-**后端：** Spring Boot 3.5.4 + Spring AI + Spring Security + JPA + SQLite
+**后端：** Spring Boot 3.5.16 + Spring AI 1.1.8 + Spring Security + JPA + SQLite
 
 **前端：** Vue 3 + TypeScript + Vite + Chart.js + Lucide Icons
 
@@ -66,7 +68,7 @@
 ## 前置要求
 
 - **Java 17+** - [下载 OpenJDK](https://adoptium.net/)
-- **Maven 3.8+** - 或使用项目内的 `./mvnw`
+- **Maven 3.9+** - 或使用项目内的 `./mvnw`
 - **Node.js 22+ / npm** - 仅本地构建前端时需要
 - **AI API Key** - OpenAI API Key 或兼容服务的 API Key
 
@@ -109,6 +111,30 @@ cp .env.example .env
 |------|----------|-----------|------|
 | OpenAI | `https://api.openai.com` | `gpt-3.5-turbo`, `gpt-4` | 官方服务 |
 | Deepseek | `https://api.deepseek.com` | `deepseek-chat` | 国内可用 |
+
+### 可选：开启截图记账
+
+截图记账默认关闭。确认当前服务和模型支持 OpenAI 兼容的图片输入（vision / `image_url`）后，再开启功能；它复用上面的 `spring.ai.openai` 下的 `base-url`、`api-key` 和 `chat.options.model`，无需另一套凭据。仅修改开关不会让文本模型具备图片识别能力，表中的文字模型示例也不代表支持图片。
+
+本地运行时，在已有 `application-local.yml` 中增加：
+
+```yaml
+app:
+  ai:
+    multimodal-enabled: true
+```
+
+使用 Docker Compose 时，在 `.env` 中将 `SPRING_AI_OPENAI_MODEL` 设为服务商支持的图片模型名称，并设置 `AI_MULTIMODAL_ENABLED=true`，然后运行 `docker compose up -d --force-recreate`。直接运行 jar 或 Docker 容器时，也可以传入环境变量 `AI_MULTIMODAL_ENABLED=true`。更改配置后需要重启应用。
+
+开启后，智能记账首页出现“截图记账”入口；关闭时入口隐藏，后端也会拒绝图片识别请求。桌面端可以选择、拖入或粘贴截图，手机端可以从相册选择截图。
+
+1. 上传一张 PNG 或 JPEG 截图，单张不超过 **5 MiB（5,242,880 字节）**、**2000 万像素**，最多识别 **20 笔**消费或收入。
+2. 点击“识别这张截图”，查看原图和识别结果。应用会把图片发送给已配置的 AI 服务，应用本身不持久保存原图。
+3. 逐笔核对金额、收支类型、日期、分类和账户，再点击“确认并记下这一笔”；也可跳过某笔。识别本身不会入账。
+
+截图缺少完整日期时，需要补充日期后保存；分类会匹配现有分类及账本历史纠正记录。付款或收款账户仅在当前账本的启用账户中按名称唯一匹配，不确定时保留“未指定账户”，由用户选择。余额、合计、未支付订单、本人账户互转及明确的非人民币交易不作为可直接保存的截图交易。
+
+图片识别与文字解析共用 `app.ai.daily-limit` 配额（默认每用户每天 200 次，按上海时间跨日）。如经过 Nginx 等反向代理，请将请求体上限设为**至少 6 MiB**，为 multipart 上传边界预留空间。配置细节见[部署指南](docs/DEPLOYMENT.md#截图记账配置)，接口示例见[API 文档](docs/API.md#截图记账)。
 
 ### 3. 构建并运行
 
@@ -252,6 +278,9 @@ server {
     ssl_certificate /path/to/cert.pem;
     ssl_certificate_key /path/to/key.pem;
 
+    # 截图文件最多 5 MiB，为 multipart 上传边界预留空间
+    client_max_body_size 6M;
+
     location / {
         proxy_pass http://localhost:8081;
         proxy_set_header Host $host;
@@ -275,6 +304,7 @@ export COOKIE_SECURE=true
 | `SPRING_AI_OPENAI_API_KEY` | AI 服务 API Key | 无 | 是 |
 | `SPRING_AI_OPENAI_BASE_URL` | AI 服务 Base URL | `https://api.openai.com` | 否 |
 | `SPRING_AI_OPENAI_MODEL` | AI 模型名称 | `gpt-3.5-turbo` | 否 |
+| `AI_MULTIMODAL_ENABLED` | 开启截图记账；要求当前服务和模型支持图片输入，复用现有 AI 配置 | `false` | 否 |
 | `REMEMBER_ME_KEY` | Remember-me 令牌签名密钥，生产环境务必设为随机值（`openssl rand -hex 32`） | 内置固定值（不安全，仅供本地） | 生产必填 |
 | `COOKIE_SECURE` | 启用 HTTPS Secure Cookie | `false` | 否 |
 | `SERVER_PORT` | 服务端口 | `8081` | 否 |
@@ -395,6 +425,10 @@ spring:
         options:
           model: new-model-name
 ```
+
+**Q: 为什么没有“截图记账”入口，或开启后识别失败？**
+
+A: 默认不显示入口。先确认模型和代理支持图片输入，再设置 `AI_MULTIMODAL_ENABLED=true`（本地 YAML 对应 `app.ai.multimodal-enabled: true`）并重启。Compose 的 `.env` 更改后需重建容器配置。若仍失败，检查文件是否为完整 PNG/JPEG、是否超过 5 MiB / 2000 万像素、反向代理是否允许至少 6 MiB 请求，以及当前模型的图片能力和调用配额。模型不可用时会提示重试，不会凭空生成交易。
 
 **Q: 如何备份数据？**
 

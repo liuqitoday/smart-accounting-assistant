@@ -123,6 +123,26 @@ public class CategoryCorrectionService {
     }
 
     /**
+     * Read-only lookup for image drafts. Uploading or discarding a screenshot must not
+     * modify correction history or its hit counters.
+     */
+    @Transactional(readOnly = true)
+    public Optional<Category> peekCorrectedCategory(Long ledgerId, TransactionType type,
+                                                    String merchant, String description) {
+        if (ledgerId == null || type == null) {
+            return Optional.empty();
+        }
+        MatchTarget target = resolveMatchTarget(merchant, description);
+        if (target == null) {
+            return Optional.empty();
+        }
+        return correctionRepository
+                .findByLedgerIdAndTypeAndMatchTypeAndMatchKey(ledgerId, type, target.matchType, target.matchKey)
+                .flatMap(correction -> categoryRepository.findById(correction.getCategoryId()))
+                .filter(category -> category.getType() == type);
+    }
+
+    /**
      * 解析匹配键：优先商户，其次描述。两者都为空则返回 null（不记忆/不命中）。
      */
     private MatchTarget resolveMatchTarget(String merchant, String description) {

@@ -60,7 +60,7 @@ public class SecurityConfig {
                         // Vue 动态样式需 style 'unsafe-inline'，图标/字体放行 data:
                         .contentSecurityPolicy(csp -> csp.policyDirectives(
                                 "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-                                        + "img-src 'self' data:; connect-src 'self'; font-src 'self' data:"))
+                                        + "img-src 'self' data: blob:; connect-src 'self'; font-src 'self' data:"))
                         // HSTS 一年 + 子域（Spring Security 默认仅在 HTTPS 请求上发送该头，HTTP 本地不受影响）
                         .httpStrictTransportSecurity(hsts -> hsts
                                 .includeSubDomains(true)

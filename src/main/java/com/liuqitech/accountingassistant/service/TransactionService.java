@@ -537,7 +537,7 @@ public class TransactionService {
              CSVPrinter csvPrinter = new CSVPrinter(writer, CSVFormat.DEFAULT.builder()
                      .setHeader("ID", "交易日期", "类型", "金额", "描述", "原始文本", "分类", "父分类",
                                "商户", "备注", "相关人员", "置信度", "AI模型", "创建人", "创建时间", "更新时间", "标签", "账户", "转入账户")
-                     .build())) {
+                     .get())) {
 
             for (Transaction t : transactions) {
                 // 标签列（逗号分隔）
@@ -704,7 +704,7 @@ public class TransactionService {
                         .setSkipHeaderRecord(true)
                         .setIgnoreEmptyLines(true)
                         .setTrim(true)
-                        .build())) {
+                        .get())) {
 
             // 校验必需列
             List<String> requiredHeaders = Arrays.asList("ID", "交易日期", "类型", "金额", "描述", "原始文本", "创建人");

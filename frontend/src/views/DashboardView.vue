@@ -48,6 +48,10 @@
           <Plus />
           手动记一笔
         </button>
+        <button v-if="transactionCapabilities?.imageParsingEnabled" class="button secondary" type="button" :disabled="!ledger.canEdit.value" @click="imageOpen = true">
+          <ImagePlus />
+          上传截图记账
+        </button>
         <p v-if="!ledger.canEdit.value" class="muted-text">当前账本为只读角色,不能新增交易。</p>
       </section>
 
@@ -155,6 +159,13 @@
     </div>
 
     <ManualTransactionModal v-model="manualOpen" :accounts="accounts" :tags="tags" @saved="onManualSaved" />
+    <ImageTransactionModal
+      v-if="transactionCapabilities?.imageParsingEnabled"
+      v-model="imageOpen"
+      :capabilities="transactionCapabilities"
+      :accounts="accounts"
+      @saved="onImageSaved"
+    />
 
     <Transition name="toast">
       <div v-if="showSavedToast" class="save-toast" role="status" aria-live="polite" aria-atomic="true">
@@ -170,19 +181,20 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { CalendarDays, CheckCircle2, ChevronDown, Plus, Sparkles, TriangleAlert } from 'lucide-vue-next'
+import { CalendarDays, CheckCircle2, ChevronDown, ImagePlus, Plus, Sparkles, TriangleAlert } from 'lucide-vue-next'
 import { accountsApi, categoriesApi, statisticsApi, tagsApi, transactionsApi } from '@/api'
 import { resolveDefaultAccountId } from '@/utils/account'
 import { flattenCategories } from '@/utils/category'
 import AppShell from '@/components/AppShell.vue'
 import CategorySelector from '@/components/CategorySelector.vue'
 import ManualTransactionModal from '@/components/ManualTransactionModal.vue'
+import ImageTransactionModal from '@/components/ImageTransactionModal.vue'
 import MessageBanner from '@/components/MessageBanner.vue'
 import PageHeader from '@/components/PageHeader.vue'
 import TagSelector from '@/components/TagSelector.vue'
 import { useMessage } from '@/composables/useMessage'
 import { useLedgerStore } from '@/stores/ledger'
-import type { Account, Category, SaveTransactionRequest, StatisticsSummary, Tag, TransactionParseResponse } from '@/types'
+import type { Account, Category, SaveTransactionRequest, StatisticsSummary, Tag, TransactionCapabilities, TransactionParseResponse } from '@/types'
 import { defaultAccountIcon, formatPlainMoney, toNumber } from '@/utils/format'
 
 const route = useRoute()
@@ -198,6 +210,8 @@ const selectedTagIds = ref<number[]>([])
 const summary = ref<StatisticsSummary | null>(null)
 const showSavedToast = ref(false)
 const manualOpen = ref(false)
+const imageOpen = ref(false)
+const transactionCapabilities = ref<TransactionCapabilities | null>(null)
 const moreOpen = ref(false)
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const resultCardRef = ref<HTMLElement | null>(null)
@@ -225,7 +239,7 @@ const accountIdProxy = computed({
 
 onMounted(async () => {
   focusIfRequested()
-  await Promise.all([loadAccounts(), loadTags(), loadSummary()])
+  await Promise.all([loadAccounts(), loadTags(), loadSummary(), loadCapabilities()])
 })
 
 onBeforeUnmount(() => {
@@ -342,6 +356,18 @@ function calibrateCheckPaths(check: HTMLElement): void {
 async function onManualSaved(): Promise<void> {
   celebrate()
   await Promise.all([loadSummary(), loadAccounts()])
+}
+
+async function onImageSaved(): Promise<void> {
+  await Promise.all([loadSummary(), loadAccounts()])
+}
+
+async function loadCapabilities(): Promise<void> {
+  try {
+    transactionCapabilities.value = await transactionsApi.capabilities()
+  } catch {
+    transactionCapabilities.value = null
+  }
 }
 
 async function loadSummary(): Promise<void> {

@@ -291,7 +291,8 @@ public class CategoryService {
      * 使用传统规则匹配分类
      */
     Optional<Category> findCategoryWithRules(String description, TransactionType type) {
-        logger.debug("使用规则匹配分类: {} ({})", description, type);
+        // 文字和截图草稿共用此路径，不把交易内容写进调试日志。
+        logger.debug("使用规则匹配分类 ({})", type);
         
         String lowerDesc = description.toLowerCase();
         

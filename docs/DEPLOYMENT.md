@@ -6,6 +6,7 @@
 
 - [Docker 部署](#docker-部署)
 - [Docker Compose 部署](#docker-compose-部署)
+- [截图记账配置](#截图记账配置)
 - [传统部署](#传统部署)
 - [反向代理配置](#反向代理配置)
 - [备份和恢复](#备份和恢复)
@@ -72,6 +73,7 @@ cp .env.example .env
 SPRING_AI_OPENAI_API_KEY=sk-your-api-key
 SPRING_AI_OPENAI_BASE_URL=https://api.openai.com
 SPRING_AI_OPENAI_MODEL=gpt-3.5-turbo
+AI_MULTIMODAL_ENABLED=false
 REMEMBER_ME_KEY=change-me-to-random-hex-string
 COOKIE_SECURE=false
 ```
@@ -111,6 +113,66 @@ git pull
 docker compose up -d --build
 ```
 
+## 截图记账配置
+
+截图记账默认关闭。它复用现有 AI 服务的 base URL、API key、模型、超时与重试设置，开启前需确认**当前模型及服务商的 OpenAI 兼容接口都支持图片输入**（vision / `image_url`）。开关只控制功能入口和后端授权，不会自动替换模型或赋予文本模型图片能力。
+
+### 配置方式
+
+Docker Compose 会将 `.env` 中的 `AI_MULTIMODAL_ENABLED` 传入容器，未配置时采用 `false`。使用支持图片的模型时，在已有 `.env` 中设置以下项目；示例值均为占位符，应替换为实际可用配置：
+
+```dotenv
+SPRING_AI_OPENAI_API_KEY=your-api-key
+SPRING_AI_OPENAI_BASE_URL=https://your-provider.example
+SPRING_AI_OPENAI_MODEL=your-vision-model
+AI_MULTIMODAL_ENABLED=true
+```
+
+更改 `.env` 后重新创建容器，让新的环境变量生效：
+
+```bash
+docker compose up -d --force-recreate
+```
+
+若同时更新了本地源代码，使用 `docker compose up -d --build` 重新构建并启动。仅执行 `docker compose restart` 不会重新读取容器的环境配置。
+
+直接运行 Docker 镜像时增加 `-e AI_MULTIMODAL_ENABLED=true`，同时通过已有的 `SPRING_AI_OPENAI_*` 环境变量配置图片模型。systemd 部署时在服务的环境配置中增加 `Environment="AI_MULTIMODAL_ENABLED=true"`，然后执行 `systemctl daemon-reload` 和 `systemctl restart accounting-assistant`。
+
+本地 `java -jar` / `spring-boot:run` 不会读取 `.env`。可以在进程环境中设置 `AI_MULTIMODAL_ENABLED=true`，或在根目录的 `application-local.yml` 中追加以下配置，保留原有 `spring.ai.openai` 配置：
+
+```yaml
+app:
+  ai:
+    multimodal-enabled: true
+```
+
+配置变更后重启应用。关闭时将相应开关改为 `false` 并重启；前端会隐藏“截图记账”入口，后端也会拒绝直接调用图片识别。不要把真实 API key 写入公开配置文件或提交到 Git。
+
+### 上传限制与反向代理
+
+| 项目 | 限制 |
+|---|---|
+| 文件类型 | 真实且完整的 PNG / JPEG 图片 |
+| 单张文件大小 | 5 MiB（5,242,880 字节） |
+| 图片像素总数 | 20,000,000 像素（宽 × 高） |
+| 单张识别笔数 | 最多 20 笔收入或支出 |
+| 应用 multipart 限制 | `max-file-size: 5MB`、`max-request-size: 6MB` |
+| 代理/网关请求体限制 | 至少 6 MiB，给 multipart 边界预留空间 |
+
+例如 Nginx 配置 `client_max_body_size 6M;` 或更大值。本指南下方的 `10M` 配置已满足要求。如果还经过 CDN、Ingress 或其它网关，也需要检查相应请求体限制；代理拒绝上传时，应用不会收到请求。
+
+默认 AI 连接超时为 5 秒，读取超时为 60 秒；图片识别与文字解析使用相同的模型重试配置。代理等待响应的超时应覆盖可能的模型等待和重试，下方 Nginx 示例使用 `proxy_read_timeout 180s`。不要只增大代理上传限制而忽略等待模型响应所需的时间。
+
+### 使用与验证
+
+重启后登录并选择一个可编辑账本，在智能记账首页打开“截图记账”。桌面端支持文件选择、拖入和粘贴，移动端支持从相册选择；上传一张截图后点击识别，核对原图与结果，再逐笔确认保存或跳过。
+
+识别结果只是待确认记录，不会自动入账。缺少完整日期时需补齐日期；分类会匹配当前分类及账本历史纠正记录；账户只在当前账本的启用账户中按名称唯一匹配，不确定时保持未指定，由用户选择。图片会发送给配置的模型服务，应用本身不持久保存原图；确认保存后，交易字段及相关识别文字按正常交易记录存储。
+
+图片识别和文字解析共用 `app.ai.daily-limit`（默认每用户每天 200 次，按上海时间重置），一张通过校验的图片计一次识别，模型调用失败也计次；逐笔保存不消耗 AI 额度。只读账本成员不能识别或保存图片交易。
+
+可使用登录会话调用 `GET /api/transactions/capabilities`，检查 `data.imageParsingEnabled` 是否为 `true`，以及服务端返回的文件类型、大小与笔数限制。该接口不会暴露模型凭据。完整请求示例及错误码见 [API 文档](API.md#截图记账)。
+
 ## 传统部署
 
 ### 1. 准备环境
@@ -118,6 +180,7 @@ docker compose up -d --build
 **系统要求：**
 - Linux 服务器（Ubuntu 20.04+ / CentOS 8+ 推荐）
 - Java 17 或更高版本
+- 本地构建需要 Maven 3.9+（或 `./mvnw`）与 Node.js 22+ / npm
 - 至少 512MB 可用内存
 - 至少 1GB 可用磁盘空间
 
@@ -289,7 +352,7 @@ server {
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-XSS-Protection "1; mode=block" always;
 
-    # 文件上传大小限制
+    # 至少 6 MiB：图片最多 5 MiB，multipart 边界还需要额外空间
     client_max_body_size 10M;
 
     # 日志
@@ -311,7 +374,7 @@ server {
         # 超时设置
         proxy_connect_timeout 60s;
         proxy_send_timeout 60s;
-        proxy_read_timeout 60s;
+        proxy_read_timeout 180s;
     }
 }
 ```
@@ -539,6 +602,14 @@ free -h
 # 调整 JVM 参数
 Environment="JAVA_OPTS=-Xmx512m -Xms256m"
 ```
+
+### 截图入口不显示或图片识别失败
+
+1. 检查已运行进程的配置是否启用 `AI_MULTIMODAL_ENABLED`，并确认 Compose 修改 `.env` 后已重新创建容器；本地运行请配置进程环境或 `application-local.yml`。
+2. 确认配置的模型和代理支持 OpenAI 兼容图片输入。文字解析成功并不能证明图片也受支持。
+3. 检查图片是否完整、是否为 PNG/JPEG，以及文件是否超过 5 MiB、尺寸是否超过 2000 万像素；超过 20 笔请裁剪后分次识别。
+4. HTTP 413 通常与应用或代理上传上限有关，检查每一层代理至少允许 6 MiB。HTTP 504 则需检查模型响应时间及代理读取超时。
+5. 若返回配额耗尽，等待下一日或按部署需求调整 `app.ai.daily-limit`；图片与文字解析共用此限额。
 
 ## 支持
 

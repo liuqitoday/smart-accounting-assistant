@@ -2,6 +2,8 @@ package com.liuqitech.accountingassistant.controller;
 
 import com.liuqitech.accountingassistant.dto.ApiResponse;
 import com.liuqitech.accountingassistant.dto.ImportResult;
+import com.liuqitech.accountingassistant.dto.ImageTransactionParseResponse;
+import com.liuqitech.accountingassistant.dto.TransactionCapabilities;
 import com.liuqitech.accountingassistant.dto.PageResponseDto;
 import com.liuqitech.accountingassistant.dto.SaveTransactionRequest;
 import com.liuqitech.accountingassistant.dto.TransactionDto;
@@ -14,6 +16,7 @@ import com.liuqitech.accountingassistant.exception.BusinessException;
 import com.liuqitech.accountingassistant.exception.ResourceNotFoundException;
 import com.liuqitech.accountingassistant.interceptor.LedgerContext;
 import com.liuqitech.accountingassistant.service.AiRateLimitService;
+import com.liuqitech.accountingassistant.service.ImageTransactionService;
 import com.liuqitech.accountingassistant.service.TransactionService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -45,11 +48,31 @@ public class TransactionController {
 
     private final TransactionService transactionService;
     private final AiRateLimitService aiRateLimitService;
+    private final ImageTransactionService imageTransactionService;
 
     public TransactionController(TransactionService transactionService,
-                                 AiRateLimitService aiRateLimitService) {
+                                 AiRateLimitService aiRateLimitService,
+                                 ImageTransactionService imageTransactionService) {
         this.transactionService = transactionService;
         this.aiRateLimitService = aiRateLimitService;
+        this.imageTransactionService = imageTransactionService;
+    }
+
+    /** 只暴露功能能力与上传限制，不返回模型凭据。 */
+    @GetMapping("/capabilities")
+    public ApiResponse<TransactionCapabilities> getCapabilities() {
+        return ApiResponse.success(imageTransactionService.capabilities());
+    }
+
+    /** 截图仅生成待确认草稿，用户通过 /save 逐笔确认后才入账。 */
+    @PostMapping(value = "/parse-image", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<ImageTransactionParseResponse> parseImage(
+            @RequestParam("file") MultipartFile file, HttpServletRequest request) {
+        ImageTransactionService.ValidatedImage image = imageTransactionService.validateImage(file);
+        aiRateLimitService.checkAndConsume(LedgerContext.username(request));
+        return ApiResponse.success(
+                imageTransactionService.parseImage(image, LedgerContext.ledgerId(request)),
+                "截图识别完成，请核对后保存");
     }
 
     /**

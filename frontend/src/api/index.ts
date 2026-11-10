@@ -9,6 +9,7 @@ import type {
   CategoryStatistic,
   GenerateRecurringBillsResult,
   ImportResult,
+  ImageTransactionParseResponse,
   Ledger,
   LedgerMember,
   LedgerRole,
@@ -19,6 +20,7 @@ import type {
   StatisticsSummary,
   Tag,
   Transaction,
+  TransactionCapabilities,
   TransactionFilters,
   TransactionParseResponse,
   TransactionType,
@@ -87,11 +89,24 @@ export const categoriesApi = {
 }
 
 export const transactionsApi = {
+  capabilities() {
+    return get<TransactionCapabilities>('/api/transactions/capabilities')
+  },
+  parseImage(file: File, ledgerId: number, signal?: AbortSignal) {
+    const data = new FormData()
+    data.append('file', file)
+    return post<ImageTransactionParseResponse>('/api/transactions/parse-image', data, {
+      signal,
+      headers: { 'X-Ledger-Id': String(ledgerId) }
+    })
+  },
   parseOnly(text: string) {
     return post<TransactionParseResponse>('/api/transactions/parse-only', { text })
   },
-  save(payload: SaveTransactionRequest) {
-    return post<TransactionParseResponse>('/api/transactions/save', payload)
+  save(payload: SaveTransactionRequest, ledgerId?: number) {
+    return post<TransactionParseResponse>('/api/transactions/save', payload, ledgerId == null
+      ? {}
+      : { headers: { 'X-Ledger-Id': String(ledgerId) } })
   },
   list(filters: TransactionFilters = {}) {
     return get<PageResponse<Transaction>>('/api/transactions', filters as Record<string, unknown>)

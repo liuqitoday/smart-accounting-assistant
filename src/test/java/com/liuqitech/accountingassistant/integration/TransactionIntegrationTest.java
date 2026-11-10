@@ -22,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -35,6 +36,7 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -222,6 +224,24 @@ class TransactionIntegrationTest {
 
         assertThat(csv).contains("咖啡");
         assertThat(csv).doesNotContain("食堂");
+    }
+
+    @Test
+    void upgradedCsvRoundTripPreservesChineseQuotesCommasAndNewlines() throws Exception {
+        String description = "咖啡,\"拿铁\"\n与早餐";
+        Transaction original = seededTransaction(description, "咖啡店", "68.50", account("支付宝").getId());
+        byte[] exported = mockMvc.perform(get("/api/transactions/export").header("X-Ledger-Id", ledgerId))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsByteArray();
+        mockMvc.perform(multipart("/api/transactions/import")
+                        .file(new MockMultipartFile("file", "transactions.csv", "text/csv", exported))
+                        .header("X-Ledger-Id", ledgerId).with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.totalRows").value(1))
+                .andExpect(jsonPath("$.data.updatedCount").value(1))
+                .andExpect(jsonPath("$.data.errorCount").value(0));
+        Transaction roundTrip = transactionRepository.findById(original.getId()).orElseThrow();
+        assertThat(roundTrip.getDescription()).isEqualTo(description);
+        assertThat(roundTrip.getAmount()).isEqualByComparingTo("68.50");
     }
 
     @Test

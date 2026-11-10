@@ -6,13 +6,18 @@ import type { Account, Ledger, TransactionParseResponse } from '@/types'
 
 const parseOnly = vi.fn()
 const listAccounts = vi.fn()
+const capabilities = vi.fn()
 
 vi.mock('@/api', () => ({
   accountsApi: { list: (...args: unknown[]) => listAccounts(...args) },
   categoriesApi: { list: vi.fn().mockResolvedValue([]) },
   tagsApi: { list: vi.fn().mockResolvedValue([]) },
   statisticsApi: { summary: vi.fn().mockResolvedValue({ totalIncome: 0, totalExpense: 0, balance: 0, transactionCount: 0 }) },
-  transactionsApi: { parseOnly: (...args: unknown[]) => parseOnly(...args), save: vi.fn() }
+  transactionsApi: {
+    parseOnly: (...args: unknown[]) => parseOnly(...args),
+    capabilities: (...args: unknown[]) => capabilities(...args),
+    save: vi.fn()
+  }
 }))
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ query: {} }) }))
@@ -35,6 +40,7 @@ const stubs = {
   PageHeader: { template: '<div />' },
   MessageBanner: { template: '<div />' },
   ManualTransactionModal: { template: '<div />' },
+  ImageTransactionModal: { template: '<div />' },
   CategorySelector: { template: '<div />' },
   TagSelector: { template: '<div />' }
 }
@@ -43,6 +49,7 @@ describe('DashboardView AI 解析后的默认账户', () => {
   beforeEach(() => {
     parseOnly.mockReset()
     listAccounts.mockReset()
+    capabilities.mockResolvedValue({ imageParsingEnabled: false })
     useLedgerStore().state.activeLedger = { id: 1, name: '账本', myRole: 'OWNER' } as Ledger
   })
 
@@ -76,6 +83,41 @@ describe('DashboardView AI 解析后的默认账户', () => {
 
     const wrapper = await parse()
     expect(accountSelect(wrapper).value).toBe('1')
+  })
+
+  it('仅服务端明确开启多模态时展示截图记账入口', async () => {
+    listAccounts.mockResolvedValue([])
+    capabilities.mockResolvedValue({ imageParsingEnabled: false })
+    const wrapper = mount(DashboardView, { global: { stubs } })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('上传截图记账')
+    wrapper.unmount()
+
+    capabilities.mockResolvedValue({ imageParsingEnabled: true })
+    const enabled = mount(DashboardView, { global: { stubs } })
+    await flushPromises()
+    expect(enabled.text()).toContain('上传截图记账')
+    enabled.unmount()
+  })
+
+  it('能力接口失败时隐藏截图入口', async () => {
+    listAccounts.mockResolvedValue([])
+    capabilities.mockRejectedValueOnce(new Error('unavailable'))
+    const wrapper = mount(DashboardView, { global: { stubs } })
+    await flushPromises()
+    expect(wrapper.text()).not.toContain('上传截图记账')
+    wrapper.unmount()
+  })
+
+  it('只读成员不能使用已开启的截图入口', async () => {
+    listAccounts.mockResolvedValue([])
+    capabilities.mockResolvedValue({ imageParsingEnabled: true })
+    useLedgerStore().state.activeLedger = { id: 1, name: '只读账本', myRole: 'VIEWER' } as Ledger
+    const wrapper = mount(DashboardView, { global: { stubs } })
+    await flushPromises()
+    const entry = wrapper.findAll('button').find(button => button.text().includes('上传截图记账'))
+    expect(entry?.attributes('disabled')).toBeDefined()
+    wrapper.unmount()
   })
 })
 

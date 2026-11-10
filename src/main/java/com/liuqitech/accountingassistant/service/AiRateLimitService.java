@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * AI 记账解析端点（/parse、/parse-only）每用户每日限流。
+ * AI 记账解析端点（/parse、/parse-only、/parse-image）共用每用户每日限流。
  * 内存计数（单机部署足够；重启清零可接受），按 {@link AppClock} 的
  * Asia/Shanghai 日界翻转。与 AnalysisChatService 的问数限流互相独立。
  */

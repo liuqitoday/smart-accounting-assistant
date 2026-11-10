@@ -197,6 +197,24 @@ export interface SaveTransactionRequest {
   accountId?: number | null
 }
 
+export interface TransactionCapabilities {
+  imageParsingEnabled: boolean
+  maxImageSizeBytes: number
+  supportedImageTypes: string[]
+  maxTransactionsPerImage: number
+}
+
+export type ImageTransactionDraft = Omit<TransactionParseResponse, 'type' | 'categoryId' | 'transactionDate'> & {
+  type: RegularTransactionType
+  categoryId: number | null
+  transactionDate: string | null
+}
+
+export interface ImageTransactionParseResponse {
+  transactions: ImageTransactionDraft[]
+  warnings: string[]
+}
+
 export interface UpdateTransactionRequest {
   amount: number | string
   type: RegularTransactionType

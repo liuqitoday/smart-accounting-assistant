@@ -6,6 +6,12 @@ spring:
   application:
     name: accounting-assistant
 
+  servlet:
+    multipart:
+      # 图片业务上限为 5 MiB；请求上限为 multipart 边界等预留空间。
+      max-file-size: 5MB
+      max-request-size: 6MB
+
   # SQLite数据库配置
   # URL 查询参数由 xerial 驱动解析为 PRAGMA：WAL 提升读写并发，busy_timeout 抗写锁竞争，
   # synchronous=NORMAL 在 WAL 下安全且减少 fsync
@@ -87,7 +93,9 @@ app:
   analysis:
     daily-limit: 30  # 每用户每天最多提问次数（V1 ChatService，Task 8 切换后可移除）
   ai:
-    daily-limit: 200  # 每用户每天 AI 记账解析（/parse、/parse-only）上限
+    daily-limit: 200  # 每用户每天 AI 记账解析（文字与截图共用）上限
+    # 仅当上述同一个模型/代理支持图片输入时开启；关闭时隐藏入口且后端拒绝图片解析。
+    multimodal-enabled: ${AI_MULTIMODAL_ENABLED:false}
 
 analysis:
   usage:

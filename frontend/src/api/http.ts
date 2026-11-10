@@ -69,7 +69,7 @@ export async function ensureCsrfCookie(): Promise<void> {
 export function authHeaders(extra?: HeadersInit, method = 'GET'): Headers {
   const headers = new Headers(extra)
   const ledgerId = getActiveLedgerId()
-  if (ledgerId) {
+  if (ledgerId && !headers.has('X-Ledger-Id')) {
     headers.set('X-Ledger-Id', ledgerId)
   }
 
