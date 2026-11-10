@@ -16,6 +16,10 @@ import com.liuqitech.accountingassistant.repository.TransactionRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -27,14 +31,20 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -182,6 +192,8 @@ class TransactionServiceValidationTest {
         assertNull(response.getAiModelUsed());
         assertEquals(new BigDecimal("35.00"), response.getAmount());
         assertEquals(1L, response.getCategoryId());
+        verify(aiParserService, times(1)).parseTransactionAndCategory(text, "category tree");
+        verify(aiParserService, times(1)).parseWithSimpleRules(text);
     }
 
     @Test
@@ -210,6 +222,124 @@ class TransactionServiceValidationTest {
 
         assertFalse(response.isFallbackUsed());
         assertEquals("test-model", response.getAiModelUsed());
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+            "NEEDS_CLARIFICATION,PARSE_NEEDS_CLARIFICATION",
+            "MULTIPLE_TRANSACTIONS,PARSE_MULTIPLE_TRANSACTIONS",
+            "TRANSFER,PARSE_TRANSFER",
+            "UNSUPPORTED_CURRENCY,PARSE_UNSUPPORTED_CURRENCY",
+            "NOT_A_TRANSACTION,PARSE_NOT_A_TRANSACTION",
+            "unexpected-provider-status,PARSE_NEEDS_CLARIFICATION"
+    })
+    void explicitRejectionNeverFallsBackOrCreatesTransactions(String status, String errorCode) {
+        TransactionAndCategoryParseResult result = new TransactionAndCategoryParseResult();
+        result.setParseStatus(status);
+        result.setReason("sensitive-provider-details");
+        when(categoryService.getFullCategoryTreeText()).thenReturn("category tree");
+        when(aiParserService.parseTransactionAndCategory(anyString(), anyString())).thenReturn(result);
+
+        BusinessException preview = assertThrows(BusinessException.class,
+                () -> transactionService.parseTransactionOnly(new TransactionParseRequest("转账500元或早餐5元、午饭20元"), 20L));
+        BusinessException create = assertThrows(BusinessException.class,
+                () -> transactionService.parseAndCreateTransaction(new TransactionParseRequest("转账500元或早餐5元、午饭20元"), 20L, "tester"));
+
+        assertEquals(errorCode, preview.getErrorCode());
+        assertEquals(errorCode, create.getErrorCode());
+        assertFalse(preview.getMessage().contains("sensitive-provider"));
+        assertFalse(preview.getMessage().contains("unexpected-provider-status"));
+        verify(aiParserService, never()).parseWithSimpleRules(anyString());
+        verify(categoryService, never()).findCategoryWithRules(any(), any());
+        verifyNoInteractions(transactionRepository, transactionManager, categoryCorrectionService);
+    }
+
+    @ParameterizedTest
+    @MethodSource("invalidModelResults")
+    void incompleteOrInvalidModelResultFailsBeforeCategoryResolutionAndSave(TransactionAndCategoryParseResult result, String code) {
+        when(categoryService.getFullCategoryTreeText()).thenReturn("category tree");
+        when(aiParserService.parseTransactionAndCategory(anyString(), anyString())).thenReturn(result);
+
+        BusinessException preview = assertThrows(BusinessException.class,
+                () -> transactionService.parseTransactionOnly(new TransactionParseRequest("午餐28元"), 20L));
+        BusinessException create = assertThrows(BusinessException.class,
+                () -> transactionService.parseAndCreateTransaction(new TransactionParseRequest("午餐28元"), 20L, "tester"));
+
+        assertEquals(code, preview.getErrorCode());
+        assertEquals(code, create.getErrorCode());
+        verify(aiParserService, never()).parseWithSimpleRules(anyString());
+        verify(categoryService, never()).findCategoryWithRules(any(), any());
+        verifyNoInteractions(transactionRepository, transactionManager, categoryCorrectionService);
+    }
+
+    private static Stream<Arguments> invalidModelResults() {
+        Stream.Builder<Arguments> cases = Stream.builder();
+        cases.add(Arguments.of(null, "PARSE_NEEDS_CLARIFICATION"));
+        for (BigDecimal amount : new BigDecimal[] { null, BigDecimal.ZERO, new BigDecimal("-1"),
+                new BigDecimal("1.001"), new BigDecimal("10000000000000") }) {
+            TransactionAndCategoryParseResult result = validModelResult();
+            result.setAmount(amount);
+            cases.add(Arguments.of(result, "PARSE_INVALID_AMOUNT"));
+        }
+        for (LocalDate date : new LocalDate[] { null, LocalDate.of(0, 1, 1), LocalDate.of(10000, 1, 1) }) {
+            TransactionAndCategoryParseResult result = validModelResult();
+            result.setTransactionDate(date);
+            cases.add(Arguments.of(result, "PARSE_INVALID_DATE"));
+        }
+        for (String description : new String[] { null, " \t\n" }) {
+            TransactionAndCategoryParseResult result = validModelResult();
+            result.setDescription(description);
+            cases.add(Arguments.of(result, "PARSE_NEEDS_CLARIFICATION"));
+        }
+        TransactionAndCategoryParseResult missingType = validModelResult();
+        missingType.setType(null);
+        cases.add(Arguments.of(missingType, "PARSE_NEEDS_CLARIFICATION"));
+        TransactionAndCategoryParseResult transfer = validModelResult();
+        transfer.setType(TransactionType.TRANSFER);
+        cases.add(Arguments.of(transfer, "PARSE_TRANSFER"));
+        return cases.build();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"0.01,READY", "12.340,", "9999999999999.99,READY"})
+    void readyResultsAcceptValidAmountsAndKeepLegacyStatusOptional(String value, String status) {
+        TransactionAndCategoryParseResult result = validModelResult();
+        result.setParseStatus(status);
+        result.setAmount(new BigDecimal(value));
+        result.setDescription("  午餐  ");
+        when(categoryService.getFullCategoryTreeText()).thenReturn("category tree");
+        when(aiParserService.parseTransactionAndCategory(anyString(), anyString())).thenReturn(result);
+        when(categoryService.resolveAndValidateCategory(1L, null, TransactionType.EXPENSE))
+                .thenReturn(Optional.of(category(1L, TransactionType.EXPENSE)));
+
+        TransactionParseResponse response = transactionService.parseTransactionOnly(new TransactionParseRequest("午餐" + value + "元"), 20L);
+
+        assertEquals(new BigDecimal(value), response.getAmount());
+        assertEquals("午餐", response.getDescription());
+        assertFalse(response.isFallbackUsed());
+        verify(aiParserService, never()).parseWithSimpleRules(anyString());
+    }
+
+    @Test
+    void businessExceptionFromParserIsPreservedWithoutFallback() {
+        BusinessException rejected = new BusinessException("请补充金额", "PARSE_NEEDS_CLARIFICATION");
+        when(categoryService.getFullCategoryTreeText()).thenReturn("category tree");
+        when(aiParserService.parseTransactionAndCategory(anyString(), anyString())).thenThrow(rejected);
+
+        assertSame(rejected, assertThrows(BusinessException.class,
+                () -> transactionService.parseTransactionOnly(new TransactionParseRequest("早餐"), 20L)));
+        verify(aiParserService, never()).parseWithSimpleRules(anyString());
+        verifyNoInteractions(transactionRepository, categoryCorrectionService);
+    }
+
+    private static TransactionAndCategoryParseResult validModelResult() {
+        TransactionAndCategoryParseResult result = new TransactionAndCategoryParseResult();
+        result.setAmount(new BigDecimal("28.00"));
+        result.setType(TransactionType.EXPENSE);
+        result.setDescription("午餐");
+        result.setTransactionDate(LocalDate.of(2026, 11, 10));
+        result.setCategoryId(1L);
+        return result;
     }
 
     @Test

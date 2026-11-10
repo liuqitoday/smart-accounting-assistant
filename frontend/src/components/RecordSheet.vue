@@ -78,10 +78,10 @@ function onSaved(result: { queued: boolean } | undefined, close: boolean): void 
 </script>
 
 <style scoped>
-.record-sheet { display: grid; gap: 18px; }
+.record-sheet { display: grid; gap: 12px; }
 .record-modes { display: flex; width: 100%; }
-.record-modes button { display: inline-flex; flex: 1; justify-content: center; align-items: center; gap: 7px; min-height: 44px; }
-.record-modes svg { width: 18px; height: 18px; }
+.record-modes button { display: inline-flex; flex: 1; justify-content: center; align-items: center; gap: 7px; min-width: 0; min-height: 44px; padding: 8px 10px; white-space: nowrap; }
+.record-modes svg { flex: none; width: 18px; height: 18px; }
 .record-notice { position: fixed; z-index: 1500; left: 50%; bottom: calc(94px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; align-items: center; gap: 9px; width: max-content; max-width: calc(100vw - 32px); padding: 13px 18px; color: var(--color-text); background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-md); box-shadow: var(--shadow-soft); }
 .record-notice svg { width: 20px; height: 20px; color: var(--color-success); }
 </style>

@@ -13,6 +13,10 @@ import java.time.LocalDate;
  */
 public class TransactionAndCategoryParseResult {
 
+    /** 内部解析状态；缺省兼容原有模型的有效交易结果，不进入对外交易响应。 */
+    @JsonProperty("parseStatus")
+    private String parseStatus;
+
     // ===== 抽取字段 =====
     @JsonProperty("amount")
     private BigDecimal amount;
@@ -77,6 +81,9 @@ public class TransactionAndCategoryParseResult {
     }
 
     // ===== Getters and Setters =====
+    public String getParseStatus() { return parseStatus; }
+    public void setParseStatus(String parseStatus) { this.parseStatus = parseStatus; }
+
     public BigDecimal getAmount() { return amount; }
     public void setAmount(BigDecimal amount) { this.amount = amount; }
 

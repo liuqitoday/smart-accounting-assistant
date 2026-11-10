@@ -106,7 +106,7 @@ class AnalysisChatContractIntegrationTest {
         viewer.setDefaultLedgerId(ledgerId);
         userRepository.save(viewer);
 
-        when(aiParserService.parseStructured(anyString(), eq(RawAnalysisPlan.class)))
+        when(aiParserService.parseStructured(anyString(), anyString(), eq(RawAnalysisPlan.class)))
             .thenReturn(clarificationPlan());
     }
 
@@ -177,7 +177,7 @@ class AnalysisChatContractIntegrationTest {
 
     @Test
     void chatReturnsSchemaVersionTwoOnValidPlan() throws Exception {
-        when(aiParserService.parseStructured(anyString(), eq(RawAnalysisPlan.class)))
+        when(aiParserService.parseStructured(anyString(), anyString(), eq(RawAnalysisPlan.class)))
             .thenReturn(validAggregatePlan());
 
         mockMvc.perform(post("/api/analysis/chat").with(csrf())
@@ -228,7 +228,7 @@ class AnalysisChatContractIntegrationTest {
 
     @Test
     void clearDoesNotResetDailyUsage() throws Exception {
-        when(aiParserService.parseStructured(anyString(), eq(RawAnalysisPlan.class)))
+        when(aiParserService.parseStructured(anyString(), anyString(), eq(RawAnalysisPlan.class)))
             .thenReturn(validAggregatePlan());
 
         mockMvc.perform(post("/api/analysis/chat").with(csrf())
@@ -254,7 +254,7 @@ class AnalysisChatContractIntegrationTest {
 
     @Test
     void noDataPayloadKeepsNamedStatus() throws Exception {
-        when(aiParserService.parseStructured(anyString(), eq(RawAnalysisPlan.class)))
+        when(aiParserService.parseStructured(anyString(), anyString(), eq(RawAnalysisPlan.class)))
             .thenReturn(validAggregatePlan());
 
         mockMvc.perform(post("/api/analysis/chat").with(csrf())
@@ -270,7 +270,7 @@ class AnalysisChatContractIntegrationTest {
 
     @Test
     void invalidPlanReturnsNamedErrorStatus() throws Exception {
-        when(aiParserService.parseStructured(anyString(), eq(RawAnalysisPlan.class)))
+        when(aiParserService.parseStructured(anyString(), anyString(), eq(RawAnalysisPlan.class)))
             .thenReturn(invalidPlan());
 
         mockMvc.perform(post("/api/analysis/chat").with(csrf())
@@ -284,7 +284,7 @@ class AnalysisChatContractIntegrationTest {
 
     @Test
     void aiFailureMapsToFailedAssistantStatus() throws Exception {
-        when(aiParserService.parseStructured(anyString(), eq(RawAnalysisPlan.class)))
+        when(aiParserService.parseStructured(anyString(), anyString(), eq(RawAnalysisPlan.class)))
             .thenThrow(new RuntimeException("AI 超时"));
 
         mockMvc.perform(post("/api/analysis/chat").with(csrf())

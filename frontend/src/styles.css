@@ -1720,6 +1720,59 @@ input[type="time"].input {
   padding-bottom: var(--modal-panel-padding);
 }
 
+/* 记账核心字段保持两列，长分类和描述仍占整行；不影响其他页面的表单。 */
+.form-grid.record-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.record-form .form-field {
+  min-width: 0;
+  align-content: start;
+  gap: 5px;
+}
+
+.record-form .input,
+.record-form .select,
+.record-form .textarea,
+.record-form .cs-trigger {
+  min-width: 0;
+  min-height: 44px;
+}
+
+.record-form .select {
+  text-overflow: ellipsis;
+}
+
+.record-form .input,
+.record-form .select {
+  padding: 9px 10px;
+}
+
+/* 留在表单流内，随弹框的可视高度（包括软键盘）吸底，不遮住最后一项。 */
+.record-form > .record-save-actions {
+  position: sticky;
+  bottom: calc(-1 * var(--modal-panel-padding));
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: calc(-1 * var(--modal-panel-padding));
+  padding: 10px 0 var(--modal-panel-padding);
+  border-top: 1px solid var(--color-border-soft);
+  background: var(--color-surface);
+}
+
+.record-save-actions > .button:first-child {
+  flex: 1;
+  min-height: 44px;
+}
+
+@media (max-width: 820px) {
+  .form-grid.record-form { row-gap: 10px; }
+  .record-save-actions > .button { padding-inline: 12px; }
+}
+
 /* —— 空状态与加载 —— */
 
 .empty-state,

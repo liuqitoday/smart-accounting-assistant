@@ -213,9 +213,11 @@ class AnalysisContextServiceTest {
 
     @Test
     void promptBuilderReturnsCappedOptionSnippet() {
-        String snippet = promptBuilder.buildOptionSnippet(10L);
+        AnalysisPromptBuilder.PlannerOptions options = promptBuilder.buildOptions(10L);
 
-        assertThat(snippet).contains("可用账户").contains("可用标签").contains("可用分类");
+        assertThat(options.accounts().items()).hasSizeLessThanOrEqualTo(30);
+        assertThat(options.tags().items()).hasSizeLessThanOrEqualTo(30);
+        assertThat(options.categories().items()).hasSizeLessThanOrEqualTo(50);
         assertThat(promptBuilder.buildPlannerRules())
             .contains("operation: AGGREGATE")
             .contains("CURRENT_MONTH")

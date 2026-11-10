@@ -85,15 +85,20 @@ class ImageTransactionOpenAiContractTest {
                     assertEquals(0.15, body.path("temperature").asDouble());
                     assertEquals(0.7, body.path("top_p").asDouble());
                     JsonNode user = null;
+                    JsonNode system = null;
                     for (JsonNode message : body.path("messages")) {
                         if ("user".equals(message.path("role").asText())) user = message;
+                        if ("system".equals(message.path("role").asText())) system = message;
                     }
                     assertNotNull(user);
+                    assertNotNull(system);
+                    assertFalse(system.path("content").asText().contains("支出：餐饮"));
                     boolean foundText = false;
                     boolean foundImage = false;
                     for (JsonNode part : user.path("content")) {
                         if ("text".equals(part.path("type").asText())) {
                             foundText = !part.path("text").asText().isBlank();
+                            assertEquals("支出：餐饮", JSON.readTree(part.path("text").asText()).path("categoryTree").asText());
                         }
                         if ("image_url".equals(part.path("type").asText())) {
                             foundImage = true;

@@ -84,8 +84,8 @@
               分类加载失败，暂时不能保存。
               <button class="button ghost" type="button" @click="loadCategories">重新加载分类</button>
             </p>
-            <form v-if="activeRow" class="form-grid image-result-form" @submit.prevent="saveActive">
-              <fieldset class="image-fields" :disabled="saving || !canEdit">
+            <form v-if="activeRow" class="form-grid record-form image-result-form" @submit.prevent="saveActive">
+              <fieldset class="form-grid record-form image-fields" :disabled="saving || !canEdit">
                 <div class="form-field">
                   <label for="image-amount">金额</label>
                   <input id="image-amount" inputmode="decimal" v-model="activeRow.draft.amount" class="input num" type="number" min="0.01" step="0.01" required />
@@ -138,7 +138,7 @@
                   <textarea id="image-note" v-model.trim="activeRow.draft.note" class="textarea image-note" placeholder="可选" />
                 </div>
               </fieldset>
-              <div class="form-field full image-save-actions">
+              <div class="form-field full record-save-actions">
                 <button class="button" type="submit" :disabled="saving || !canEdit || categoryError">
                   {{ saving ? '保存中…' : online ? '确认并记下这一笔' : '保存，联网后同步' }}
                 </button>
@@ -462,10 +462,9 @@ function requestClose(value: boolean): void {
 .image-row-description { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
 .image-row-amount { flex-shrink: 0; font-size: 17px; }
 .image-row-status { flex-shrink: 0; color: var(--color-success-text); font-size: 12px; }
-.image-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-md); grid-column: 1 / -1; margin: 0; padding: 0; min-width: 0; border: 0; }
+.image-fields { grid-column: 1 / -1; margin: 0; padding: 0; min-width: 0; border: 0; }
 .image-required-hint { font-size: 12px; color: var(--color-danger-text); }
 .image-note { min-height: 68px; }
-.image-save-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .image-complete { display: grid; justify-items: center; gap: 12px; padding: 28px 12px; text-align: center; }
 .image-complete > svg { width: 32px; height: 32px; color: var(--color-success); }
 .image-complete p { margin: 0; }
@@ -474,9 +473,6 @@ function requestClose(value: boolean): void {
   .image-dropzone { min-height: 200px; }
   .image-preview { max-height: 260px; }
   .image-empty { min-height: 130px; }
-  .image-actions > .button:first-child, .image-save-actions > .button:first-child { flex: 1; }
-}
-@media (max-width: 380px) {
-  .image-fields { grid-template-columns: minmax(0, 1fr); }
+  .image-actions > .button:first-child { flex: 1; }
 }
 </style>

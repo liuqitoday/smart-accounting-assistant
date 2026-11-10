@@ -104,7 +104,7 @@ public class TransactionService {
      * 写库动作由 {@link CategoryCorrectionService} 自身的方法级事务以短事务完成。</p>
      */
     public TransactionParseResponse parseTransactionOnly(TransactionParseRequest request, Long ledgerId) {
-        logger.debug("解析交易文本: {} (ledger={})", request, ledgerId);
+        logger.debug("解析交易文本 (ledger={})", ledgerId);
         String text = request.getText();
 
         ResolvedParse resolved = resolveTransactionFromText(text, ledgerId);
@@ -146,7 +146,7 @@ public class TransactionService {
      * 对自调用不生效，故用编程式事务包裹）。</p>
      */
     public TransactionParseResponse parseAndCreateTransaction(TransactionParseRequest request, Long ledgerId, String username) {
-        logger.debug("解析并创建交易记录: {} (ledger={})", request, ledgerId);
+        logger.debug("解析并创建交易记录 (ledger={})", ledgerId);
         String text = request.getText();
 
         // 1. 与 parse-only 共用同一条「AI 解析→纠正记忆→关键词回退」管线
@@ -183,6 +183,7 @@ public class TransactionService {
 
     /** 纠正记忆命中时对外报告的置信度 */
     private static final BigDecimal LEARNED_CONFIDENCE = new BigDecimal("0.99");
+    private static final BigDecimal MAX_PARSED_AMOUNT = new BigDecimal("9999999999999.99");
 
     /** 解析管线结果：抽取字段 + 解析出的分类 + 是否命中账本纠正记忆 */
     private record ResolvedParse(TransactionAndCategoryParseResult parseResult,
@@ -204,6 +205,7 @@ public class TransactionService {
         // 1. 一次 AI 调用同时完成抽取 + 分类（合并原两次调用，省一次网络往返）
         ParseAttempt attempt = doAIParseWithFallback(text);
         TransactionAndCategoryParseResult parseResult = attempt.parseResult();
+        validateParsedTransaction(parseResult);
 
         // 2. 分类解析：先查账本纠正记忆，命中则覆盖；否则用 AI 分类（校验）；最后回退规则
         boolean learnedFromHistory = false;
@@ -229,6 +231,50 @@ public class TransactionService {
         Category category = categoryOpt
                 .orElseThrow(() -> new BusinessException("无法找到合适的分类"));
         return new ResolvedParse(parseResult, category, learnedFromHistory, attempt.fallbackUsed());
+    }
+
+    /** 在分类、纠正记忆及写库之前校验模型输出。明确业务拒绝不能再走金额规则降级。 */
+    private void validateParsedTransaction(TransactionAndCategoryParseResult result) {
+        if (result == null) {
+            throw new BusinessException("未能识别这笔账，请补充金额、收支方向和交易内容", "PARSE_NEEDS_CLARIFICATION");
+        }
+        String status = result.getParseStatus();
+        if (status != null) {
+            switch (status) {
+                case "READY" -> { }
+                case "NEEDS_CLARIFICATION" -> throw new BusinessException(
+                        "这笔账的信息还不够明确，请补充准确金额、收支方向和日期", "PARSE_NEEDS_CLARIFICATION");
+                case "MULTIPLE_TRANSACTIONS" -> throw new BusinessException(
+                        "一次只能解析一笔账，请将多笔收支分开输入", "PARSE_MULTIPLE_TRANSACTIONS");
+                case "TRANSFER" -> throw new BusinessException(
+                        "本人账户间转账请使用手动记账中的转账功能", "PARSE_TRANSFER");
+                case "UNSUPPORTED_CURRENCY" -> throw new BusinessException(
+                        "暂不支持外币记账，请提供实际人民币结算金额", "PARSE_UNSUPPORTED_CURRENCY");
+                case "NOT_A_TRANSACTION" -> throw new BusinessException(
+                        "请描述一笔已经发生的收支，并包含金额", "PARSE_NOT_A_TRANSACTION");
+                default -> throw new BusinessException(
+                        "未能确认解析结果，请重新描述这笔账或改为手动记账", "PARSE_NEEDS_CLARIFICATION");
+            }
+        }
+        if (result.getType() == TransactionType.TRANSFER) {
+            throw new BusinessException("本人账户间转账请使用手动记账中的转账功能", "PARSE_TRANSFER");
+        }
+        if (result.getType() != TransactionType.INCOME && result.getType() != TransactionType.EXPENSE) {
+            throw new BusinessException("请明确这笔账是收入还是支出", "PARSE_NEEDS_CLARIFICATION");
+        }
+        BigDecimal amount = result.getAmount();
+        if (amount == null || amount.signum() <= 0 || amount.compareTo(MAX_PARSED_AMOUNT) > 0
+                || amount.stripTrailingZeros().scale() > 2) {
+            throw new BusinessException("请输入大于0且不超过9999999999999.99的金额，最多保留两位小数", "PARSE_INVALID_AMOUNT");
+        }
+        LocalDate date = result.getTransactionDate();
+        if (date == null || date.getYear() < 1 || date.getYear() > 9999) {
+            throw new BusinessException("未能确认交易日期，请提供有效的年月日", "PARSE_INVALID_DATE");
+        }
+        if (result.getDescription() == null || result.getDescription().isBlank()) {
+            throw new BusinessException("请补充这笔账的交易内容", "PARSE_NEEDS_CLARIFICATION");
+        }
+        result.setDescription(result.getDescription().trim());
     }
 
     /**
@@ -977,8 +1023,10 @@ public class TransactionService {
         String treeText = categoryService.getFullCategoryTreeText();
         try {
             return new ParseAttempt(aiParserService.parseTransactionAndCategory(text, treeText), false);
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
-            logger.warn("合并 AI 解析失败，回退到规则解析: {}", e.getMessage());
+            logger.warn("合并 AI 解析失败，回退到规则解析，异常类型: {}", e.getClass().getSimpleName());
             return new ParseAttempt(
                     new TransactionAndCategoryParseResult(aiParserService.parseWithSimpleRules(text)),
                     true

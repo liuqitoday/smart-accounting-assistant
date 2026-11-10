@@ -35,6 +35,9 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -90,11 +93,12 @@ public class AnalysisChatService {
         Optional<AnalysisContextSummary> priorContext = contextService.find(ledgerId, username);
         List<AnalysisConversationLine> recent = messageRepository.findRecentConversationLines(
             ledgerId, username, PageRequest.of(0, CONTEXT_WINDOW * 2));
-        String prompt = buildPlannerPrompt(ledgerId, question, priorContext, recent);
+        LocalDate today = AppClock.today();
+        PlannerPrompt prompt = buildPlannerPrompt(ledgerId, question, priorContext, recent, today);
 
         RawAnalysisPlan raw;
         try {
-            raw = aiParserService.parseStructured(prompt, RawAnalysisPlan.class);
+            raw = aiParserService.parseStructured(prompt.system(), prompt.user(), RawAnalysisPlan.class);
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
@@ -108,7 +112,7 @@ public class AnalysisChatService {
 
         AnalysisPlanValidationResult validation;
         try {
-            validation = planValidator.validate(ledgerId, raw, AppClock.today());
+            validation = planValidator.validate(ledgerId, raw, today);
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
@@ -122,6 +126,12 @@ public class AnalysisChatService {
             String answer = validation.errors().isEmpty()
                 ? "请补充分析所需的时间或筛选条件。"
                 : String.join("；", validation.errors());
+            if (validation.status() == AnalysisResponseStatus.CLARIFICATION_REQUIRED
+                    && raw != null && (raw.getOperation() == null || raw.getOperation().isBlank())
+                    && (raw.getQueries() == null || raw.getQueries().isEmpty())
+                    && raw.getTitle() != null && !raw.getTitle().isBlank()) {
+                answer = raw.getTitle().trim();
+            }
             String payload = serializePayload(payloadFactory.create(raw, null,
                 new AnalysisExecutionOutcome(validation.status(), List.of(), List.of())));
             AnalysisChatResponse response = persistenceService.saveRound(
@@ -134,7 +144,7 @@ public class AnalysisChatService {
         NormalizedAnalysisPlan normalized = validation.normalizedPlan();
         AnalysisExecutionOutcome outcome;
         try {
-            outcome = operationExecutor.execute(ledgerId, normalized);
+            outcome = operationExecutor.execute(ledgerId, normalized, today);
         } catch (BusinessException e) {
             throw e;
         } catch (DataAccessException e) {
@@ -169,30 +179,33 @@ public class AnalysisChatService {
         persistenceService.clear(ledgerId, username);
     }
 
-    private String buildPlannerPrompt(Long ledgerId, String question,
+    private record PlannerPrompt(String system, String user) {}
+
+    private PlannerPrompt buildPlannerPrompt(Long ledgerId, String question,
                                       Optional<AnalysisContextSummary> priorContext,
-                                      List<AnalysisConversationLine> recent) {
-        StringBuilder prompt = new StringBuilder();
-        prompt.append("你是账本分析计划器。\n");
-        prompt.append(promptBuilder.buildPlannerRules());
-        prompt.append(promptBuilder.buildOptionSnippet(ledgerId));
-        priorContext.ifPresent(summary -> {
-            prompt.append("最近成功上下文：\n");
-            try {
-                prompt.append(objectMapper.writeValueAsString(summary)).append('\n');
-            } catch (JsonProcessingException e) {
-                logger.warn("序列化分析上下文失败 ledgerId={}", ledgerId);
-            }
-        });
-        if (!recent.isEmpty()) {
-            prompt.append("最近对话：\n");
-            for (int i = recent.size() - 1; i >= 0; i--) {
-                AnalysisConversationLine line = recent.get(i);
-                prompt.append(line.getRole()).append(": ").append(line.getContent()).append('\n');
-            }
+                                      List<AnalysisConversationLine> recent, LocalDate today) {
+        String system = promptBuilder.buildPlannerRules()
+            + "\n当前业务日期：" + today + "；星期：" + today.getDayOfWeek()
+            + "；业务时区：" + AppClock.ZONE.getId() + "。\n";
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("availableOptions", promptBuilder.buildOptions(ledgerId));
+        data.put("previousContext", priorContext.orElse(null));
+        List<Map<String, String>> conversation = new ArrayList<>();
+        for (int i = recent.size() - 1; i >= 0; i--) {
+            AnalysisConversationLine line = recent.get(i);
+            Map<String, String> entry = new LinkedHashMap<>();
+            entry.put("role", line.getRole());
+            entry.put("content", line.getContent());
+            conversation.add(entry);
         }
-        prompt.append("用户问题：\n").append(question);
-        return prompt.toString();
+        data.put("recentConversation", conversation);
+        data.put("currentQuestion", question);
+        try {
+            return new PlannerPrompt(system, objectMapper.writeValueAsString(data));
+        } catch (JsonProcessingException e) {
+            // 不能悄悄丢掉上下文或筛选后继续请求，否则追问可能变成全量查询。
+            throw new IllegalStateException("无法构建分析输入", e);
+        }
     }
 
     private AnalysisRequestClass classifyRequest(RawAnalysisPlan raw) {
