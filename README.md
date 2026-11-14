@@ -6,8 +6,11 @@
 [![Java](https://img.shields.io/badge/Java-17+-orange.svg)](https://openjdk.org/)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.5.16-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![Vue](https://img.shields.io/badge/Vue-3.5+-green.svg)](https://vuejs.org/)
+[![在线演示](https://img.shields.io/badge/%E5%9C%A8%E7%BA%BF%E6%BC%94%E7%A4%BA-%E7%AB%8B%E5%8D%B3%E4%BD%93%E9%AA%8C-blue.svg)](https://tewit1yi-java-accounting-assistant.apps-5.websson.cloud)
 
 一个前后端一体的智能记账应用，使用自然语言即可完成记账。
+
+**🚀 在线演示：** <https://tewit1yi-java-accounting-assistant.apps-5.websson.cloud>（注册账号即可体验，无需本地部署）
 
 [特性](#特性) • [界面预览](#界面预览) • [快速开始](#快速开始) • [部署](#部署) • [文档](#文档) • [贡献](#贡献)
 
