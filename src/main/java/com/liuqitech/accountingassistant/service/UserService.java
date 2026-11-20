@@ -7,6 +7,7 @@ import com.liuqitech.accountingassistant.entity.Ledger;
 import com.liuqitech.accountingassistant.entity.User;
 import com.liuqitech.accountingassistant.exception.BusinessException;
 import com.liuqitech.accountingassistant.repository.UserRepository;
+import com.liuqitech.accountingassistant.mcp.McpConnectionService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -16,11 +17,14 @@ public class UserService {
     private final UserRepository userRepository;
     private final LedgerService ledgerService;
     private final PasswordEncoder passwordEncoder;
+    private final McpConnectionService mcpConnections;
 
-    public UserService(UserRepository userRepository, LedgerService ledgerService, PasswordEncoder passwordEncoder) {
+    public UserService(UserRepository userRepository, LedgerService ledgerService, PasswordEncoder passwordEncoder,
+                       McpConnectionService mcpConnections) {
         this.userRepository = userRepository;
         this.ledgerService = ledgerService;
         this.passwordEncoder = passwordEncoder;
+        this.mcpConnections = mcpConnections;
     }
 
     @Transactional
@@ -73,6 +77,7 @@ public class UserService {
 
         user.setPassword(passwordEncoder.encode(request.getNewPassword()));
         userRepository.save(user);
+        mcpConnections.revokeAll(username);
     }
 
     // ── 密码验证：BCrypt 优先，兼容旧 SHA-256 ──

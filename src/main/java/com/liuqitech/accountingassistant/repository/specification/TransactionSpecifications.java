@@ -145,6 +145,17 @@ public class TransactionSpecifications {
         );
     }
 
+    /** Same keyword fields as structured analysis; merchant has its own filter. */
+    public static Specification<Transaction> analysisKeyword(String keyword) {
+        return (root, query, cb) -> {
+            if (keyword == null || keyword.isBlank()) return cb.conjunction();
+            String pattern = SqlLike.contains(keyword);
+            return cb.or(cb.like(root.get("description"), pattern, SqlLike.ESCAPE),
+                    cb.like(root.get("originalText"), pattern, SqlLike.ESCAPE),
+                    cb.like(root.get("note"), pattern, SqlLike.ESCAPE));
+        };
+    }
+
     /**
      * 按交易类型查询
      */

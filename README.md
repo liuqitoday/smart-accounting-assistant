@@ -40,6 +40,8 @@
 
 **CSV 导入导出** - 支持外部数据导入，支持按条件筛选导出
 
+**MCP Agent 接入** - 通过标准 MCP 工具让各类 Agent 记账、查明细和统计；支持远程 Streamable HTTP、本地 stdio 桥接和按账本授权的专用令牌，见 [MCP 接入指南](docs/MCP.md)
+
 **安全可靠** - 密码加密存储、Session + Remember-me 双重登录态、CSRF 防护
 
 **SQLite 数据库** - 零配置，备份就是复制一个文件
@@ -343,6 +345,7 @@ export COOKIE_SECURE=true
 ## 文档
 
 - [API 文档](docs/API.md) - 常用接口与统一响应格式
+- [MCP 接入指南](docs/MCP.md) - 通用 Agent 接入、令牌授权、工具与重试规则
 - [部署指南](docs/DEPLOYMENT.md) - Docker / systemd / 反向代理 / 备份
 - [贡献指南](docs/CONTRIBUTING.md) - 开发环境、代码规范、PR 流程
 - [交易筛选、导出与导入指南](docs/FILTER_AND_EXPORT_GUIDE.md)

@@ -1,5 +1,5 @@
 <template>
-  <UiModal v-model="open" title="修改密码" subtitle="输入当前密码后设置新密码。" size="sm">
+  <UiModal v-model="open" title="修改密码" subtitle="输入当前密码后设置新密码。修改后所有 MCP 连接令牌也会撤销。" size="sm">
     <form class="form-grid" @submit.prevent="submit">
       <div class="form-field full">
         <label for="current-password">当前密码</label>

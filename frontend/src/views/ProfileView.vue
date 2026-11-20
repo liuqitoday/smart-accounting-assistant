@@ -63,7 +63,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { BookOpen, ChevronRight, KeyRound, Landmark, Tags, Smartphone } from 'lucide-vue-next'
+import { BookOpen, ChevronRight, KeyRound, Landmark, Tags, Smartphone, PlugZap } from 'lucide-vue-next'
 import UiModal from '@/components/UiModal.vue'
 import { useInstall } from '@/composables/useInstall'
 import ChangePasswordModal from '@/components/ChangePasswordModal.vue'
@@ -82,6 +82,7 @@ const install = useInstall()
 const avatarChar = computed(() => (auth.state.username || '友').slice(0, 1).toUpperCase())
 
 const menuItems = [
+  { to: '/mcp-connections', label: 'MCP 连接', hint: '授权 AI 助手记账与查账', icon: PlugZap, bg: '#DCEDF7' },
   { to: '/accounts', label: '我的账户', hint: '现金、银行卡与网络支付', icon: Landmark, bg: '#FDEAD7' },
   { to: '/tags', label: '标签', hint: '给交易贴上自己的标记', icon: Tags, bg: '#E1F0DD' },
   { to: '/ledgers', label: '账本', hint: '多账本与成员共享', icon: BookOpen, bg: '#DCEDF7' }

@@ -24,6 +24,7 @@ const router = createRouter({
     { path: '/tags', name: 'tags', component: () => import('@/views/TagsView.vue'), meta: { title: '标签管理' } },
     { path: '/ledgers', name: 'ledgers', component: () => import('@/views/LedgersView.vue'), meta: { title: '账本管理' } },
     { path: '/profile', name: 'profile', component: () => import('@/views/ProfileView.vue'), meta: { title: '个人中心' } },
+    { path: '/mcp-connections', name: 'mcp-connections', component: () => import('@/views/McpConnectionsView.vue'), meta: { title: 'MCP 连接' } },
     { path: '/index.html', redirect: '/dashboard' },
     { path: '/login.html', redirect: '/login' },
     { path: '/transactions.html', redirect: '/transactions' },

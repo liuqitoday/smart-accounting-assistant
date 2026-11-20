@@ -31,8 +31,26 @@ public class SchemaIndexInitializer implements CommandLineRunner {
     public void run(String... args) {
         createPersistentLoginsTable();
         createTransactionSaveReceipts();
+        createMcpTables();
         createUniqueIndexes();
         logger.debug("数据库索引初始化完成");
+    }
+
+    private void createMcpTables() {
+        // Authorization and durable creation provenance must exist before accepting requests.
+        jdbc.execute("CREATE TABLE IF NOT EXISTS mcp_connections ("
+                + "id VARCHAR(36) PRIMARY KEY, username VARCHAR(50) NOT NULL, name VARCHAR(80) NOT NULL, "
+                + "token_hash VARCHAR(64) NOT NULL UNIQUE, token_prefix VARCHAR(20) NOT NULL, "
+                + "writable BOOLEAN NOT NULL, default_ledger_id BIGINT, created_at BIGINT NOT NULL, "
+                + "expires_at BIGINT NOT NULL, revoked_at BIGINT, last_used_at BIGINT)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_mcp_connections_user ON mcp_connections(username)");
+        jdbc.execute("CREATE TABLE IF NOT EXISTS mcp_connection_ledgers ("
+                + "connection_id VARCHAR(36) NOT NULL, ledger_id BIGINT NOT NULL, PRIMARY KEY(connection_id, ledger_id))");
+        jdbc.execute("CREATE TABLE IF NOT EXISTS mcp_call_logs ("
+                + "id VARCHAR(36) PRIMARY KEY, connection_id VARCHAR(36) NOT NULL, ledger_id BIGINT, "
+                + "tool_name VARCHAR(80) NOT NULL, request_id VARCHAR(36), transaction_id BIGINT, "
+                + "outcome VARCHAR(20) NOT NULL, error_code VARCHAR(80), created_at BIGINT NOT NULL, duration_ms BIGINT NOT NULL)");
+        jdbc.execute("CREATE INDEX IF NOT EXISTS idx_mcp_calls_connection_time ON mcp_call_logs(connection_id, created_at DESC)");
     }
 
     /**

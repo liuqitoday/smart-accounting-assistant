@@ -519,6 +519,19 @@ public class TransactionService {
         return toPageResponse(transactions);
     }
 
+    /** Paginated details matching the exact filters used by structured analysis. */
+    @Transactional(readOnly = true)
+    public PageResponseDto<TransactionDto> queryAnalysisTransactions(Long ledgerId,
+            com.liuqitech.accountingassistant.dto.analysis.NormalizedAnalysisQuery query, Pageable pageable) {
+        var filters = query.filters();
+        validateQueryFilters(ledgerId, filters.accountId(), filters.minAmount(), filters.maxAmount());
+        Specification<Transaction> spec = TransactionSpecifications.buildQuery(ledgerId, null, query.transactionType(),
+                query.period().start(), query.period().end(), filters.tagIds(), null, filters.categoryId(),
+                filters.accountId(), filters.merchant(), filters.minAmount(), filters.maxAmount())
+                .and(TransactionSpecifications.analysisKeyword(filters.keyword()));
+        return toPageResponse(transactionRepository.findAll(spec, pageable));
+    }
+
     /**
      * 导出账本所有交易记录为CSV
      */

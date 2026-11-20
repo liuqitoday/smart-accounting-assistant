@@ -16,7 +16,8 @@ public class SpaForwardController {
             "/accounts",
             "/tags",
             "/ledgers",
-            "/profile"
+            "/profile",
+            "/mcp-connections"
     })
     public String forwardSpaRoutes() {
         return "forward:/index.html";

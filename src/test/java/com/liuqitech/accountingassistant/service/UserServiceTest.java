@@ -4,6 +4,7 @@ import com.liuqitech.accountingassistant.dto.ChangePasswordRequest;
 import com.liuqitech.accountingassistant.entity.User;
 import com.liuqitech.accountingassistant.exception.BusinessException;
 import com.liuqitech.accountingassistant.repository.UserRepository;
+import com.liuqitech.accountingassistant.mcp.McpConnectionService;
 import com.liuqitech.accountingassistant.security.LegacyCompatiblePasswordEncoder;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,6 +35,9 @@ class UserServiceTest {
     @Mock
     private LedgerService ledgerService;
 
+    @Mock
+    private McpConnectionService mcpConnections;
+
     private final PasswordEncoder passwordEncoder = new LegacyCompatiblePasswordEncoder();
 
     @Test
@@ -45,6 +49,7 @@ class UserServiceTest {
         userService.changePassword("demo", request("oldpass1234", "newpass1234"));
 
         verify(userRepository).save(user);
+        verify(mcpConnections).revokeAll("demo");
         assertNotEquals(hash("oldpass1234"), user.getPassword());
         assertTrue(passwordEncoder.matches("newpass1234", user.getPassword()));
     }
@@ -94,7 +99,7 @@ class UserServiceTest {
     }
 
     private UserService userService() {
-        return new UserService(userRepository, ledgerService, passwordEncoder);
+        return new UserService(userRepository, ledgerService, passwordEncoder, mcpConnections);
     }
 
     private static String hash(String password) {

@@ -131,6 +131,7 @@ import {
   LogOut,
   MessagesSquare,
   Plus,
+  PlugZap,
   Sparkles,
   Tags,
   UserRound,
@@ -168,6 +169,7 @@ const navItems = [
 ]
 
 const managementItems = [
+  { to: '/mcp-connections', label: 'MCP 连接', icon: PlugZap },
   { to: '/ledgers', label: '账本设置', icon: BookOpen },
   { to: '/tags', label: '标签管理', icon: Tags }
 ]
