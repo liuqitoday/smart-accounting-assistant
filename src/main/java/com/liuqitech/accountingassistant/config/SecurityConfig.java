@@ -92,6 +92,7 @@ public class SecurityConfig {
                                 "/tags",
                                 "/ledgers",
                                 "/profile",
+                                "/mcp-connections",
                                 "/assets/**",
                                 "/favicon.svg",
                                 "/apple-touch-icon.png",

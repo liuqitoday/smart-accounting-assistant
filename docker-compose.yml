@@ -19,6 +19,9 @@ services:
       # Security
       - REMEMBER_ME_KEY=${REMEMBER_ME_KEY}
       - COOKIE_SECURE=${COOKIE_SECURE:-false}
+      - MCP_ENABLED=${MCP_ENABLED:-true}
+      - MCP_ALLOWED_HOSTS=${MCP_ALLOWED_HOSTS:-localhost,127.0.0.1,[::1]}
+      - MCP_ALLOWED_ORIGINS=${MCP_ALLOWED_ORIGINS:-}
 
       # Optional
       - SERVER_PORT=8081

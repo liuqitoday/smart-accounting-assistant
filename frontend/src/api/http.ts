@@ -102,7 +102,7 @@ export async function get<T>(path: string, params?: Record<string, unknown>, opt
   const url = `${path}${params ? queryString(params) : ''}`
   const headers = authHeaders()
   const load = () => executeRequest<T>(url, { headers, signal: options.signal })
-  if (options.signal || path.includes('/auth/') || path.includes('/members')) return load()
+  if (options.signal || path.includes('/auth/') || path.includes('/members') || path.startsWith('/api/mcp/')) return load()
   const ttl = path === '/api/categories' || path === '/api/transactions/capabilities' ? 5 * 60000 : 30000
   return cachedQuery(queryKey(url, headers.get('X-Ledger-Id') || ''), load, { ttl, force: options.force })
 }

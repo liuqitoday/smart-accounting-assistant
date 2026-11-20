@@ -24,6 +24,7 @@ import java.util.List;
  */
 @Repository
 public interface TransactionRepository extends JpaRepository<Transaction, Long>, JpaSpecificationExecutor<Transaction> {
+    boolean existsByIdAndLedgerIdAndDeletedAtIsNull(Long id, Long ledgerId);
 
     // ==================== 基础查询方法（保留用于简单场景） ====================
 

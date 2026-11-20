@@ -221,6 +221,9 @@ public class LedgerService {
         ledgerAccessService.requireAccess(username, ledgerId, LedgerRole.OWNER);
 
         recurringBillRepository.deleteByLedgerId(ledgerId);
+        // SQLite can reuse a deleted ledger ID. Old MCP grants must not authorize a future ledger.
+        jdbc.update("DELETE FROM mcp_connection_ledgers WHERE ledger_id = ?", ledgerId);
+        jdbc.update("UPDATE mcp_connections SET default_ledger_id = NULL WHERE default_ledger_id = ?", ledgerId);
         jdbc.update("DELETE FROM transaction_save_receipts WHERE ledger_id = ?", ledgerId);
         transactionRepository.deleteByLedgerId(ledgerId);
         accountRepository.deleteByLedgerId(ledgerId);

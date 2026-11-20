@@ -24,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.function.Consumer;
 
 /**
  * Durable save receipts make retries safe, including after the original HTTP response was lost.
@@ -37,6 +38,7 @@ public class TransactionSaveService {
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
     private final TransactionTemplate transaction;
+    private final TransactionTemplate receiptRead;
 
     public TransactionSaveService(TransactionService transactionService, JdbcTemplate jdbc,
                                   ObjectMapper objectMapper, PlatformTransactionManager manager) {
@@ -45,9 +47,18 @@ public class TransactionSaveService {
         this.objectMapper = objectMapper;
         this.transaction = new TransactionTemplate(manager);
         this.transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.receiptRead = new TransactionTemplate(manager);
+        this.receiptRead.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+        this.receiptRead.setReadOnly(true);
     }
 
     public TransactionParseResponse save(SaveTransactionRequest request, Long ledgerId, String username) {
+        return save(request, ledgerId, username, () -> {}, response -> {});
+    }
+
+    /** Hooks run only for a new receipt, inside the same transaction as the saved row. */
+    public TransactionParseResponse save(SaveTransactionRequest request, Long ledgerId, String username,
+                                         Runnable beforeCreate, Consumer<TransactionParseResponse> afterCreate) {
         if (request.getClientRequestId() == null) {
             return transactionService.saveTransaction(request, ledgerId, username);
         }
@@ -56,7 +67,9 @@ public class TransactionSaveService {
         try {
             return transaction.execute(status -> {
                 claim(ledgerId, username, requestId, hash);
+                beforeCreate.run();
                 TransactionParseResponse response = transactionService.saveTransaction(request, ledgerId, username);
+                afterCreate.accept(response);
                 jdbc.update("UPDATE transaction_save_receipts SET response_json = ? "
                                 + "WHERE ledger_id = ? AND username = ? AND client_request_id = ?",
                         toJson(response), ledgerId, username, requestId);
@@ -65,9 +78,12 @@ public class TransactionSaveService {
         } catch (ReceiptAlreadyClaimed conflict) {
             // The failed transaction has rolled back before looking for the committed winner.
             // Do not turn unrelated persistence errors into successful idempotency responses.
-            List<Receipt> receipts = jdbc.query("SELECT request_hash, response_json FROM transaction_save_receipts "
+            // Rejoin the request's JPA connection after rollback. Bare JDBC would lease a
+            // second connection while OpenEntityManagerInView still holds the first one.
+            List<Receipt> receipts = receiptRead.execute(status -> jdbc.query(
+                    "SELECT request_hash, response_json FROM transaction_save_receipts "
                             + "WHERE ledger_id = ? AND username = ? AND client_request_id = ?",
-                    (rs, rowNum) -> new Receipt(rs.getString(1), rs.getString(2)), ledgerId, username, requestId);
+                    (rs, rowNum) -> new Receipt(rs.getString(1), rs.getString(2)), ledgerId, username, requestId));
             if (receipts.isEmpty()) throw conflict;
             Receipt receipt = receipts.get(0);
             if (!receipt.hash().equals(hash)) {
