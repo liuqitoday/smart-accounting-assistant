@@ -32,6 +32,7 @@
           <div><dt>最近调用</dt><dd>{{ connection.lastUsedAt ? formatTime(connection.lastUsedAt) : '尚未使用' }}</dd></div>
         </dl>
         <div class="row-actions">
+          <button class="button secondary compact" :disabled="busy" @click="openDetails(connection)">连接详情</button>
           <button class="button secondary compact" :disabled="busy" @click="showCalls(connection)">调用记录</button>
           <button v-if="connection.status === 'ACTIVE'" class="button secondary compact" :disabled="busy" @click="openRotate(connection)">更换令牌</button>
           <button v-if="connection.status === 'ACTIVE'" class="button danger compact" :disabled="busy" @click="revoke(connection)">撤销连接</button>
@@ -39,8 +40,8 @@
       </article>
     </div>
 
-    <UiModal v-model="connectionOpen" :title="secretOpen ? '保存连接信息' : rotating ? '更换令牌' : '新建 MCP 连接'" :subtitle="secretOpen ? '完整令牌只在这里显示一次。关闭后可通过更换令牌重新连接。' : ''" :size="secretOpen ? 'lg' : 'md'">
-      <form v-if="!secretOpen && !rotating" class="grid" @submit.prevent="create">
+    <UiModal v-model="connectionOpen" :title="secretOpen ? '保存连接信息' : detailConnection ? '连接详情' : rotating ? '更换令牌' : '新建 MCP 连接'" :subtitle="secretOpen ? '完整令牌只在这里显示一次，请妥善保存。关闭后仍可在连接详情中查看地址和配置示例。' : detailConnection ? '随时查看接入配置和授权信息。完整令牌仅在创建或更换时显示一次。' : ''" :size="secretOpen || detailConnection ? 'lg' : 'md'">
+      <form v-if="!secretOpen && !detailConnection && !rotating" class="grid" @submit.prevent="create">
         <div class="form-field"><label for="mcp-name">连接名称</label><input id="mcp-name" v-model="form.name" class="input" placeholder="例如：个人助手、工作电脑" maxlength="80" required /></div>
         <fieldset class="ledger-choices"><legend>允许访问的账本</legend>
           <label v-for="item in ledger.state.ledgers" :key="item.id"><input v-model="form.ledgerIds" type="checkbox" :value="item.id" /><span>{{ item.name }}</span><small>{{ item.myRole === 'VIEWER' ? '仅查看' : '可记账' }}</small></label>
@@ -51,25 +52,46 @@
         <MessageBanner :message="modalMessage.text" :type="modalMessage.type" />
         <div class="row-actions"><button class="button" type="submit" :disabled="busy || !form.ledgerIds.length">{{ busy ? '创建中…' : '创建连接' }}</button><button class="button secondary" type="button" :disabled="busy" @click="createOpen = false">取消</button></div>
       </form>
-      <div v-else-if="!secretOpen && rotating" class="grid">
+      <div v-else-if="!secretOpen && !detailConnection && rotating" class="grid">
         <p>更换「{{ rotating.name }}」的令牌后，原令牌立即失效，需要将新令牌更新到客户端。有效期保持不变。</p>
         <MessageBanner :message="modalMessage.text" :type="modalMessage.type" />
         <div class="row-actions"><button class="button" :disabled="busy" @click="rotate">{{ busy ? '更换中…' : '确认更换' }}</button><button class="button secondary" :disabled="busy" @click="connectionOpen = false">取消</button></div>
       </div>
-      <div v-else-if="issued" class="grid">
-        <div class="form-field"><label for="mcp-url">服务地址 · Streamable HTTP</label><input id="mcp-url" class="input" readonly :value="endpoint" /></div>
-        <div class="form-field"><label for="mcp-token">专用令牌</label><textarea id="mcp-token" class="input token-value" rows="2" readonly :value="issued.token" autocomplete="off" spellcheck="false" /><button class="button secondary" @click="copy(issued.token)"><Copy />复制令牌</button></div>
+      <div v-else-if="issued || detailConnection" class="grid connection-details">
+        <section v-if="detailConnection" aria-label="连接授权信息">
+          <div class="connection-title"><h3>{{ detailConnection.name }}</h3><span class="badge" :class="detailConnection.status === 'ACTIVE' ? 'success' : 'neutral'">{{ statusLabel(detailConnection.status) }}</span></div>
+          <dl class="connection-meta">
+            <div><dt>操作权限</dt><dd>{{ detailConnection.writable ? '记账与查询' : '只读查询' }}</dd></div>
+            <div><dt>允许访问的账本</dt><dd>{{ detailConnection.ledgerIds.map(ledgerName).join('、') || '暂无授权账本' }}</dd></div>
+            <div><dt>默认账本</dt><dd>{{ detailConnection.defaultLedgerId ? ledgerName(detailConnection.defaultLedgerId) : '每次由助手确认' }}</dd></div>
+            <div><dt>令牌前缀</dt><dd><code>{{ detailConnection.tokenPrefix }}…</code></dd></div>
+            <div><dt>创建时间</dt><dd>{{ formatTime(detailConnection.createdAt) }}</dd></div>
+            <div><dt>有效期至</dt><dd>{{ formatTime(detailConnection.expiresAt) }}</dd></div>
+            <div><dt>最近调用</dt><dd>{{ detailConnection.lastUsedAt ? formatTime(detailConnection.lastUsedAt) : '尚未使用' }}</dd></div>
+          </dl>
+          <p class="muted-text">实际操作仍受你在各账本中的成员权限限制。</p>
+          <p v-if="detailConnection.status !== 'ACTIVE'" class="connection-notice" role="status">此连接{{ statusLabel(detailConnection.status) }}，原令牌无法使用。请关闭详情并新建连接，获取新的授权和令牌。</p>
+        </section>
+        <div class="form-field"><label for="mcp-url">服务地址 · Streamable HTTP</label><input id="mcp-url" class="input" readonly :value="endpoint" /><button class="button secondary compact" type="button" @click="copy(endpoint)">复制服务地址</button></div>
+        <div v-if="issued" class="form-field"><label for="mcp-token">专用令牌</label><textarea id="mcp-token" class="input token-value" rows="2" readonly :value="issued.token" autocomplete="off" spellcheck="false" /><button class="button secondary" @click="copy(issued.token)"><Copy />复制令牌</button></div>
+        <p v-else class="connection-notice">完整令牌无法再次查看。请使用已保存的令牌替换配置中的 &lt;专用令牌&gt;，令牌前缀不能用于连接。<template v-if="detailConnection?.status === 'ACTIVE'">若未保存，请更换令牌，并同步更新使用此连接的客户端；旧令牌会立即失效。</template></p>
         <p>认证选择 Bearer Token，或添加请求头 <code>Authorization: Bearer &lt;专用令牌&gt;</code>。将令牌保存在客户端的连接设置中。</p>
         <details class="bridge-help" open>
           <summary>Streamable HTTP · JSON 配置示例</summary>
           <p>使用常见的 <code>mcpServers</code> 格式；<code>type: "http"</code> 表示 Streamable HTTP。</p>
           <pre>{{ httpConfig }}</pre>
           <button class="button secondary compact" type="button" @click="copy(httpConfig)">复制 HTTP 配置示例</button>
-          <p class="muted-text">将 &lt;专用令牌&gt; 替换为上方令牌。不同客户端的配置层级和传输字段可能不同，请按客户端说明调整。</p>
+          <p class="muted-text">将 &lt;专用令牌&gt; 替换为{{ issued ? '上方令牌' : '你已保存的完整令牌' }}。不同客户端的配置层级和传输字段可能不同，请按客户端说明调整。</p>
         </details>
-        <details class="bridge-help"><summary>客户端只支持本地命令（stdio）？</summary><p>使用项目内的 Node.js 桥接脚本。将下面脚本路径替换为本机绝对路径；环境变量由客户端传给进程。需要 Node.js 22 或以上。</p><pre>{{ stdioConfig }}</pre><button class="button secondary compact" @click="copy(stdioConfig)">复制 stdio 配置示例</button><p class="muted-text">不同客户端配置格式可能不同；示例中的令牌占位符需替换为上方专用令牌。</p></details>
+        <details class="bridge-help"><summary>客户端只支持本地命令（stdio）？</summary><p>使用项目内的 Node.js 桥接脚本。将下面脚本路径替换为本机绝对路径；环境变量由客户端传给进程。需要 Node.js 22 或以上。</p><pre>{{ stdioConfig }}</pre><button class="button secondary compact" @click="copy(stdioConfig)">复制 stdio 配置示例</button><p class="muted-text">不同客户端配置格式可能不同；示例中的令牌占位符需替换为{{ issued ? '上方专用令牌' : '你已保存的完整令牌' }}。</p></details>
         <MessageBanner :message="secretMessage.text" :type="secretMessage.type" />
-        <div class="row-actions"><button class="button" @click="secretOpen = false">我已保存</button></div>
+        <div class="row-actions">
+          <button v-if="issued" class="button" @click="secretOpen = false">我已保存</button>
+          <template v-else>
+            <button class="button" @click="connectionOpen = false">关闭详情</button>
+            <button v-if="detailConnection?.status === 'ACTIVE'" class="button secondary" :disabled="busy" @click="openRotate(detailConnection)">更换令牌</button>
+          </template>
+        </div>
       </div>
     </UiModal>
 
@@ -104,9 +126,11 @@ const loading = ref(false), loadFailed = ref(false), busy = ref(false)
 const createOpen = ref(false), secretOpen = ref(false), callsOpen = ref(false)
 const issued = ref<McpIssued | null>(null)
 const rotating = ref<McpConnection | null>(null)
-// Keep the same modal history entry when creation advances to one-time credentials.
-const connectionOpen = computed({ get: () => createOpen.value || secretOpen.value,
-  set: (open: boolean) => { if (!open) { createOpen.value = false; secretOpen.value = false } } })
+const detailId = ref<string | null>(null)
+const detailConnection = computed(() => connections.value.find(connection => connection.id === detailId.value) ?? null)
+// Keep one modal history entry across details, rotation and one-time credentials.
+const connectionOpen = computed({ get: () => createOpen.value || secretOpen.value || !!detailConnection.value,
+  set: (open: boolean) => { if (!open) { createOpen.value = false; secretOpen.value = false; detailId.value = null } } })
 const calls = ref<McpCall[]>([]), callsName = ref(''), callsId = ref('')
 const callsLoading = ref(false), callsFailed = ref(false)
 const form = reactive({ name: '', ledgerIds: [] as number[], defaultLedgerId: null as number | null, writable: false, expiresInDays: 90 })
@@ -119,8 +143,9 @@ let generation = 0
 
 watch(() => form.ledgerIds.slice(), ids => { if (form.defaultLedgerId && !ids.includes(form.defaultLedgerId)) form.defaultLedgerId = null })
 watch(secretOpen, open => { if (!open) { issued.value = null; clearSecretNotice() } })
+watch(connectionOpen, open => { if (!open) clearSecretNotice() })
 onActivated(() => { active = true; void load() })
-function clearSensitive() { active = false; generation++; issued.value = null; secretOpen.value = false; createOpen.value = false; callsOpen.value = false }
+function clearSensitive() { active = false; generation++; issued.value = null; secretOpen.value = false; createOpen.value = false; detailId.value = null; callsOpen.value = false }
 onDeactivated(clearSensitive)
 onBeforeUnmount(clearSensitive)
 
@@ -132,6 +157,7 @@ async function load() {
 }
 function openCreate() {
   clearModal()
+  detailId.value = null
   rotating.value = null
   Object.assign(form, { name: '', ledgerIds: [], defaultLedgerId: null, writable: false, expiresInDays: 90 })
   createOpen.value = true
@@ -154,7 +180,8 @@ async function revoke(connection: McpConnection) {
   try { await mcpApi.revoke(connection.id); showSuccess('连接已撤销'); await load() }
   catch (error) { showError(error) } finally { busy.value = false }
 }
-function openRotate(connection: McpConnection) { clearModal(); rotating.value = connection; createOpen.value = true }
+function openDetails(connection: McpConnection) { clearSecretNotice(); rotating.value = null; detailId.value = connection.id }
+function openRotate(connection: McpConnection) { clearModal(); detailId.value = null; rotating.value = connection; createOpen.value = true }
 async function rotate() {
   if (busy.value || !rotating.value) return
   busy.value = true
@@ -173,8 +200,8 @@ async function loadCalls() {
   catch { callsFailed.value = true } finally { callsLoading.value = false }
 }
 async function copy(value: string) {
-  try { await navigator.clipboard.writeText(value); if (secretOpen.value) secretNotice('success', '已复制'); else showSuccess('已复制') }
-  catch { if (secretOpen.value) secretNotice('error', '复制失败，请选中文本手动复制'); else showError(null, '复制失败，请选中文本手动复制') }
+  try { await navigator.clipboard.writeText(value); if (secretOpen.value || detailConnection.value) secretNotice('success', '已复制'); else showSuccess('已复制') }
+  catch { if (secretOpen.value || detailConnection.value) secretNotice('error', '复制失败，请选中文本手动复制'); else showError(null, '复制失败，请选中文本手动复制') }
 }
 function ledgerName(id: number) { return ledger.state.ledgers.find(l => l.id === id)?.name || `账本 #${id}（已不可访问）` }
 function statusLabel(status: string) { return ({ ACTIVE: '可用', REVOKED: '已撤销', EXPIRED: '已过期' } as Record<string, string>)[status] || status }
@@ -195,6 +222,13 @@ function toolLabel(tool: string) { return ({ accounting_get_context: '获取可�
 .connection-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 350px), 1fr)); gap: 18px; }
 .connection-card { min-width: 0; }
 .connection-title h2 { overflow-wrap: anywhere; }
+.connection-title h3 { margin: 0; font-size: 18px; overflow-wrap: anywhere; }
+.connection-details { min-width: 0; }
+.connection-details > * { min-width: 0; }
+.connection-details p { line-height: 1.7; margin: 0; }
+.connection-details .row-actions { flex-wrap: wrap; }
+.connection-details .form-field > button { justify-self: start; }
+.connection-notice { padding: 14px 16px; border-radius: 12px; background: #f4f1eb; }
 .connection-meta { display: grid; gap: 10px; margin: 20px 0; font-size: 13px; }
 .connection-meta > div { display: flex; justify-content: space-between; gap: 12px; }
 .connection-meta dt { color: var(--text-muted, #777); flex-shrink: 0; }
