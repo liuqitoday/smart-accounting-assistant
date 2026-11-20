@@ -60,6 +60,13 @@
         <div class="form-field"><label for="mcp-url">服务地址 · Streamable HTTP</label><input id="mcp-url" class="input" readonly :value="endpoint" /></div>
         <div class="form-field"><label for="mcp-token">专用令牌</label><textarea id="mcp-token" class="input token-value" rows="2" readonly :value="issued.token" autocomplete="off" spellcheck="false" /><button class="button secondary" @click="copy(issued.token)"><Copy />复制令牌</button></div>
         <p>认证选择 Bearer Token，或添加请求头 <code>Authorization: Bearer &lt;专用令牌&gt;</code>。将令牌保存在客户端的连接设置中。</p>
+        <details class="bridge-help" open>
+          <summary>Streamable HTTP · JSON 配置示例</summary>
+          <p>使用常见的 <code>mcpServers</code> 格式；<code>type: "http"</code> 表示 Streamable HTTP。</p>
+          <pre>{{ httpConfig }}</pre>
+          <button class="button secondary compact" type="button" @click="copy(httpConfig)">复制 HTTP 配置示例</button>
+          <p class="muted-text">将 &lt;专用令牌&gt; 替换为上方令牌。不同客户端的配置层级和传输字段可能不同，请按客户端说明调整。</p>
+        </details>
         <details class="bridge-help"><summary>客户端只支持本地命令（stdio）？</summary><p>使用项目内的 Node.js 桥接脚本。将下面脚本路径替换为本机绝对路径；环境变量由客户端传给进程。需要 Node.js 22 或以上。</p><pre>{{ stdioConfig }}</pre><button class="button secondary compact" @click="copy(stdioConfig)">复制 stdio 配置示例</button><p class="muted-text">不同客户端配置格式可能不同；示例中的令牌占位符需替换为上方专用令牌。</p></details>
         <MessageBanner :message="secretMessage.text" :type="secretMessage.type" />
         <div class="row-actions"><button class="button" @click="secretOpen = false">我已保存</button></div>
@@ -105,6 +112,7 @@ const callsLoading = ref(false), callsFailed = ref(false)
 const form = reactive({ name: '', ledgerIds: [] as number[], defaultLedgerId: null as number | null, writable: false, expiresInDays: 90 })
 const selectedLedgers = computed(() => ledger.state.ledgers.filter(item => form.ledgerIds.includes(item.id)))
 const endpoint = new URL('/mcp', window.location.origin).href
+const httpConfig = JSON.stringify({ mcpServers: { accounting: { type: 'http', url: endpoint, headers: { Authorization: 'Bearer <专用令牌>' } } } }, null, 2)
 const stdioConfig = JSON.stringify({ mcpServers: { accounting: { command: 'node', args: ['/absolute/path/to/accounting-assistant-opensource/mcp/bridge.mjs'], env: { ACCOUNTING_MCP_URL: endpoint, ACCOUNTING_MCP_TOKEN: '<专用令牌>' } } } }, null, 2)
 let active = true
 let generation = 0

@@ -29,6 +29,24 @@
 
 各客户端的配置文件格式不同，上表是通用连接信息。无需安装某个 Agent 厂商的专有插件或 Skill。客户端必须支持手工配置 Bearer 凭据；只支持 OAuth 的客户端目前不能直接连接。
 
+使用 `mcpServers` 的客户端可以参考下面的 JSON 配置，将域名和 `<专用令牌>` 替换为自己的连接信息：
+
+```json
+{
+  "mcpServers": {
+    "accounting": {
+      "type": "http",
+      "url": "https://your-domain.com/mcp",
+      "headers": {
+        "Authorization": "Bearer <专用令牌>"
+      }
+    }
+  }
+}
+```
+
+这里的 `type: "http"` 表示 Streamable HTTP，采用 [Claude Code 等客户端支持的配置形式](https://code.claude.com/docs/en/mcp)。MCP 协议不统一各客户端的配置文件格式；其他客户端可能使用不同的外层结构、字段名称或传输值，请按对应说明调整。网页创建连接或更换令牌后，也会展示带当前服务地址的 JSON 示例，并提供复制按钮。
+
 生产部署必须将实际域名加入 `MCP_ALLOWED_HOSTS`。它是逗号分隔的主机名列表，不包含 scheme 或端口；默认仅允许 localhost、127.0.0.1 和 [::1]。例如 Docker Compose 的 `.env`：
 
 ```dotenv
